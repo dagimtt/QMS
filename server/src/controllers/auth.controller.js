@@ -23,12 +23,10 @@ export const login = async (req, res) => {
     
     console.log('Login attempt:', { email });
     
-    // Validate input
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
     
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       console.log('User not found:', email);
@@ -37,12 +35,10 @@ export const login = async (req, res) => {
     
     console.log('User found:', { email: user.email, role: user.role });
     
-    // Check if user is active
     if (!user.isActive) {
       return res.status(403).json({ message: 'Account is deactivated' });
     }
     
-    // Compare password
     const isPasswordValid = await user.comparePassword(password);
     console.log('Password valid:', isPasswordValid);
     
@@ -50,29 +46,24 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     
-    // Generate tokens
     const { accessToken, refreshToken } = generateTokens(user._id);
     
-    // Update user with new refresh token and last login
-    user.refreshToken = refreshToken;
-    user.lastLogin = new Date();
+    // Update user without using save() - use findByIdAndUpdate to avoid pre-save hooks
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        refreshToken: refreshToken,
+        lastLogin: new Date()
+      }
+    });
     
-    // Save user (this will NOT re-hash password because password wasn't modified)
-    try {
-      await user.save();
-    } catch (saveError) {
-      console.error('Error saving user:', saveError);
-      // Continue even if save fails - user can still login
-    }
-    
-    // Prepare response
     const userResponse = {
       _id: user._id,
       fullName: user.fullName,
       email: user.email,
       role: user.role,
       isActive: user.isActive,
-      username: user.username
+      username: user.username,
+      counter: user.counter
     };
     
     console.log('Login successful:', userResponse.email);
@@ -106,8 +97,10 @@ export const refreshToken = async (req, res) => {
     
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
     
-    user.refreshToken = newRefreshToken;
-    await user.save();
+    // Update without using save()
+    await User.findByIdAndUpdate(user._id, {
+      $set: { refreshToken: newRefreshToken }
+    });
     
     res.json({
       success: true,
@@ -127,11 +120,9 @@ export const logout = async (req, res) => {
     if (refreshToken) {
       const decoded = jwt.decode(refreshToken);
       if (decoded && decoded.userId) {
-        const user = await User.findById(decoded.userId);
-        if (user) {
-          user.refreshToken = null;
-          await user.save();
-        }
+        await User.findByIdAndUpdate(decoded.userId, {
+          $set: { refreshToken: null }
+        });
       }
     }
     

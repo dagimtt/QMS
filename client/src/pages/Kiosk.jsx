@@ -82,12 +82,11 @@ const Kiosk = () => {
           </div>
           
           <div className="bg-gray-100 rounded-lg p-6 mb-6">
-            <div className="text-5xl font-mono font-bold text-blue-600 mb-4">
+            <div className="text-3xl font-mono font-bold text-blue-600 mb-4">
               {ticketGenerated.ticketNumber}
             </div>
             <div className="text-left space-y-2">
               <p><strong className="text-gray-700">Service:</strong> {ticketGenerated.service?.name}</p>
-              <p><strong className="text-gray-700">Zone:</strong> {ticketGenerated.zone?.name}</p>
               <p><strong className="text-gray-700">Counter:</strong> {ticketGenerated.assignedCounter?.counterNumber}</p>
               <p><strong className="text-gray-700">Time:</strong> {new Date(ticketGenerated.createdAt).toLocaleTimeString()}</p>
             </div>
@@ -189,7 +188,7 @@ const Kiosk = () => {
       </div>
       
       <div className="max-w-7xl mx-auto px-4 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
           {services.map((service) => (
             <button
               key={service._id}

@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -31,7 +30,8 @@ const userSchema = new mongoose.Schema({
   },
   counter: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Counter"
+    ref: "Counter",
+    default: null
   },
   isActive: {
     type: Boolean,
@@ -43,38 +43,17 @@ const userSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// Hash password before saving
-userSchema.pre('save', function(next) {
-  const user = this;
-  
-  // Only hash the password if it has been modified (or is new)
-  if (!user.isModified('password')) {
-    return next();
-  }
-  
-  // Generate salt and hash password
-  bcrypt.genSalt(10, function(err, salt) {
-    if (err) return next(err);
-    
-    bcrypt.hash(user.password, salt, function(err, hash) {
-      if (err) return next(err);
-      
-      user.password = hash;
-      next();
-    });
-  });
-});
+// NO pre-save middleware - we'll hash passwords in the controller
 
 // Compare password method
-userSchema.methods.comparePassword = function(candidatePassword) {
-  const user = this;
-  
-  return new Promise((resolve, reject) => {
-    bcrypt.compare(candidatePassword, user.password, function(err, isMatch) {
-      if (err) reject(err);
-      resolve(isMatch);
-    });
-  });
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  try {
+    const bcrypt = await import('bcryptjs');
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    console.error('Password comparison error:', error);
+    return false;
+  }
 };
 
 export default mongoose.model("User", userSchema);

@@ -1,23 +1,236 @@
+import User from "../models/User.js";
+import Counter from "../models/Counter.js";
+
 export const getUsers = async (req, res) => {
-  res.status(200).json({ message: "Get users endpoint - to be implemented" });
+  try {
+    const users = await User.find()
+      .select('-password -refreshToken')
+      .populate('counter');
+    
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ message: 'Failed to get users', error: error.message });
+  }
 };
 
 export const getUserById = async (req, res) => {
-  res.status(200).json({ message: "Get user by ID endpoint - to be implemented" });
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id)
+      .select('-password -refreshToken')
+      .populate('counter');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ message: 'Failed to get user' });
+  }
 };
 
 export const createUser = async (req, res) => {
-  res.status(200).json({ message: "Create user endpoint - to be implemented" });
+  try {
+    const { username, fullName, email, password, role, counter } = req.body;
+    
+    console.log('Creating user:', { email, fullName, role });
+    
+    // Validate required fields
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ 
+        message: 'Missing required fields: fullName, email, and password are required' 
+      });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { username }] 
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ 
+        message: 'User already exists with this email or username' 
+      });
+    }
+    
+    // Generate username from email if not provided
+    const finalUsername = username || email.split('@')[0];
+    
+    // Create user
+    const user = new User({
+      username: finalUsername,
+      fullName,
+      email,
+      password,
+      role: role || 'Verifier',
+      counter: counter || null,
+      isActive: true
+    });
+    
+    await user.save();
+    
+    // Return user without password
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.refreshToken;
+    
+    console.log('User created successfully:', userResponse.email);
+    
+    res.status(201).json({ 
+      success: true, 
+      user: userResponse,
+      message: 'User created successfully'
+    });
+  } catch (error) {
+    console.error('Create user error:', error);
+    res.status(500).json({ 
+      message: 'Failed to create user', 
+      error: error.message 
+    });
+  }
 };
 
 export const updateUser = async (req, res) => {
-  res.status(200).json({ message: "Update user endpoint - to be implemented" });
+  try {
+    const { id } = req.params;
+    const { fullName, role, counter, isActive } = req.body;
+    
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    if (fullName) user.fullName = fullName;
+    if (role) user.role = role;
+    if (counter !== undefined) user.counter = counter;
+    if (isActive !== undefined) user.isActive = isActive;
+    
+    await user.save();
+    
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.refreshToken;
+    
+    res.json({ success: true, user: userResponse });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ message: 'Failed to update user' });
+  }
 };
 
 export const deactivateUser = async (req, res) => {
-  res.status(200).json({ message: "Deactivate user endpoint - to be implemented" });
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    user.isActive = false;
+    user.refreshToken = null;
+    await user.save();
+    
+    res.json({ success: true, message: 'User deactivated successfully' });
+  } catch (error) {
+    console.error('Deactivate user error:', error);
+    res.status(500).json({ message: 'Failed to deactivate user' });
+  }
 };
 
 export const changePassword = async (req, res) => {
-  res.status(200).json({ message: "Change password endpoint - to be implemented" });
+  try {
+    const { id } = req.params;
+    const { currentPassword, newPassword } = req.body;
+    
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const isValid = await user.comparePassword(currentPassword);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+    
+    user.password = newPassword;
+    await user.save();
+    
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ message: 'Failed to change password' });
+  }
+};
+
+export const assignCounterToUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { counterId } = req.body;
+    
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    if (counterId) {
+      const counter = await Counter.findById(counterId);
+      if (!counter) {
+        return res.status(404).json({ message: 'Counter not found' });
+      }
+      
+      // Check if user role matches counter type
+      if (user.role !== counter.type && user.role !== 'Admin') {
+        return res.status(400).json({ 
+          message: `User role (${user.role}) does not match counter type (${counter.type})` 
+        });
+      }
+      
+      user.counter = counterId;
+      await user.save();
+      
+      // Also assign user to counter if not already assigned
+      if (counter.assignedUser?.toString() !== user._id.toString()) {
+        counter.assignedUser = user._id;
+        await counter.save();
+      }
+    } else {
+      // Remove counter assignment
+      if (user.counter) {
+        await Counter.findByIdAndUpdate(user.counter, { $unset: { assignedUser: "" } });
+      }
+      user.counter = null;
+      await user.save();
+    }
+    
+    const updatedUser = await User.findById(id)
+      .select('-password -refreshToken')
+      .populate('counter');
+    
+    res.json({ 
+      success: true, 
+      user: updatedUser,
+      message: counterId ? 'User assigned to counter successfully' : 'User removed from counter successfully'
+    });
+  } catch (error) {
+    console.error('Assign counter to user error:', error);
+    res.status(500).json({ message: 'Failed to assign counter to user' });
+  }
+};
+
+export const getUnassignedUsers = async (req, res) => {
+  try {
+    const users = await User.find({ 
+      counter: { $in: [null, undefined] },
+      isActive: true 
+    }).select('-password -refreshToken');
+    
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error('Get unassigned users error:', error);
+    res.status(500).json({ message: 'Failed to get unassigned users' });
+  }
 };

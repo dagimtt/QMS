@@ -1,19 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Squares2X2Icon } from '@heroicons/react/24/outline';
 import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 import {
   HomeIcon,
   TicketIcon,
   UsersIcon,
-  Cog6ToothIcon,
   ChartBarIcon,
   ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
-  QueueListIcon,
-  BuildingStorefrontIcon,
-  TagIcon
+  ComputerDesktopIcon
 } from '@heroicons/react/24/outline';
 
 const Layout = () => {
@@ -21,16 +19,54 @@ const Layout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userCounter, setUserCounter] = useState(null);
 
- const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-  { name: 'Tickets', href: '/tickets', icon: TicketIcon },
+  useEffect(() => {
+    if (user?.counter) {
+      fetchUserCounter();
+    }
+  }, [user]);
 
-  { name: 'Base Data', href: '/base-data', icon: Squares2X2Icon },
+  const fetchUserCounter = async () => {
+    try {
+      const response = await api.get(`/counters/${user.counter}`);
+      setUserCounter(response.data.counter);
+    } catch (error) {
+      console.error('Failed to fetch user counter:', error);
+    }
+  };
 
-  { name: 'Users', href: '/users', icon: UsersIcon },
-  { name: 'Reports', href: '/reports', icon: ChartBarIcon },
-];
+  // Base navigation - keeping your original structure
+  const navigation = [
+    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
+    { name: 'Tickets', href: '/tickets', icon: TicketIcon },
+    { name: 'Base Data', href: '/base-data', icon: Squares2X2Icon },
+    { name: 'Users', href: '/users', icon: UsersIcon },
+    { name: 'Reports', href: '/reports', icon: ChartBarIcon },
+  ];
+
+  // Create navigation with My Counter added for officers
+  const getNavigation = () => {
+    // Check if user is an officer (Verifier, Cashier, Validator, Authorizer) and has a counter
+    const isOfficer = ['Verifier', 'Cashier', 'Validator', 'Authorizer'].includes(user?.role);
+    
+    if (isOfficer && userCounter) {
+      // Insert My Counter after Dashboard, before Tickets
+      const officerNav = [
+        { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
+        { name: 'My Counter', href: `/counter/${userCounter._id}`, icon: ComputerDesktopIcon },
+        { name: 'Tickets', href: '/tickets', icon: TicketIcon },
+        { name: 'Base Data', href: '/base-data', icon: Squares2X2Icon },
+        { name: 'Users', href: '/users', icon: UsersIcon },
+        { name: 'Reports', href: '/reports', icon: ChartBarIcon },
+      ];
+      return officerNav;
+    }
+    
+    return navigation;
+  };
+
+  const currentNavigation = getNavigation();
 
   const handleLogout = async () => {
     await logout();
@@ -50,7 +86,7 @@ const Layout = () => {
             </button>
           </div>
           <nav className="flex-1 p-4">
-            {navigation.map((item) => (
+            {currentNavigation.map((item) => (
               <button
                 key={item.name}
                 onClick={() => {
@@ -78,7 +114,7 @@ const Layout = () => {
             <h1 className="text-xl font-bold text-blue-600">Queue Management System</h1>
           </div>
           <nav className="flex-1 p-4 space-y-1">
-            {navigation.map((item) => (
+            {currentNavigation.map((item) => (
               <button
                 key={item.name}
                 onClick={() => navigate(item.href)}
@@ -110,6 +146,11 @@ const Layout = () => {
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-900">{user?.fullName}</p>
                 <p className="text-xs text-gray-500">{user?.role}</p>
+                {userCounter && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    {userCounter.name || `Counter ${userCounter.counterNumber}`}
+                  </p>
+                )}
               </div>
               <button
                 onClick={handleLogout}

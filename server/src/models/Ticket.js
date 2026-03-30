@@ -27,7 +27,7 @@ const ticketSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Waiting', 'Serving', 'Completed', 'Cancelled', 'Escalated', 'Priority', 'No-Show'],
+    enum: ['Waiting', 'Serving', 'Completed', 'Cancelled', 'Escalated', 'Priority'],
     default: 'Waiting',
     index: true
   },
@@ -39,20 +39,24 @@ const ticketSchema = new mongoose.Schema({
   customerInfo: {
     name: {
       type: String,
-      trim: true
+      trim: true,
+      default: ''
     },
     phone: {
       type: String,
-      trim: true
+      trim: true,
+      default: ''
     },
     email: {
       type: String,
       lowercase: true,
-      trim: true
+      trim: true,
+      default: ''
     },
     idNumber: {
       type: String,
-      trim: true
+      trim: true,
+      default: ''
     }
   },
   assignedCounter: {
@@ -65,15 +69,15 @@ const ticketSchema = new mongoose.Schema({
   completedAt: Date,
   waitingTime: {
     type: Number,
-    description: 'Time waited in minutes'
+    default: 0
   },
   serviceTime: {
     type: Number,
-    description: 'Time taken to serve in minutes'
+    default: 0
   },
   totalTime: {
     type: Number,
-    description: 'Total time from creation to completion in minutes'
+    default: 0
   },
   isPriority: {
     type: Boolean,
@@ -99,10 +103,7 @@ const ticketSchema = new mongoose.Schema({
     resolution: String
   },
   auditLog: [{
-    action: {
-      type: String,
-      required: true
-    },
+    action: String,
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
@@ -112,8 +113,7 @@ const ticketSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     },
-    details: mongoose.Schema.Types.Mixed,
-    ipAddress: String
+    details: mongoose.Schema.Types.Mixed
   }],
   notifications: {
     smsSent: {
@@ -139,7 +139,7 @@ ticketSchema.index({ zone: 1, status: 1 });
 ticketSchema.index({ assignedCounter: 1, status: 1 });
 ticketSchema.index({ createdAt: -1 });
 
-// Generate unique ticket number
+// Generate unique ticket number - static method
 ticketSchema.statics.generateTicketNumber = async function(zoneCode, groupCode) {
   const today = new Date();
   const year = today.getFullYear().toString().slice(-2);
@@ -160,7 +160,7 @@ ticketSchema.statics.generateTicketNumber = async function(zoneCode, groupCode) 
   return `${zoneCode}${groupCode}${dateStr}${sequence.toString().padStart(4, '0')}`;
 };
 
-// Method to calculate times
+// Calculate times - method
 ticketSchema.methods.calculateTimes = function() {
   if (this.createdAt && this.completedAt) {
     this.totalTime = Math.floor((this.completedAt - this.createdAt) / 60000);
@@ -171,56 +171,21 @@ ticketSchema.methods.calculateTimes = function() {
   if (this.createdAt && this.calledAt) {
     this.waitingTime = Math.floor((this.calledAt - this.createdAt) / 60000);
   }
+  return this;
 };
 
-// Method to add audit log entry
+// Add audit log - method
 ticketSchema.methods.addAuditLog = function(action, user, details = {}) {
   this.auditLog.push({
     action,
     user: user?._id || user,
     userRole: user?.role,
-    details,
-    ipAddress: details.ipAddress
+    timestamp: new Date(),
+    details
   });
+  return this;
 };
 
-// Method to escalate ticket
-ticketSchema.methods.escalate = async function(reason, user) {
-  this.status = 'Escalated';
-  this.escalationDetails = {
-    reason,
-    escalatedBy: user._id,
-    escalatedAt: new Date()
-  };
-  this.addAuditLog('Ticket Escalated', user, { reason });
-  await this.save();
-};
-
-// Method to resolve escalation
-ticketSchema.methods.resolveEscalation = async function(resolution, user) {
-  if (this.status === 'Escalated') {
-    this.status = 'Waiting';
-    this.escalationDetails.resolvedBy = user._id;
-    this.escalationDetails.resolvedAt = new Date();
-    this.escalationDetails.resolution = resolution;
-    this.addAuditLog('Escalation Resolved', user, { resolution });
-    await this.save();
-  }
-};
-
-// Method to mark as priority
-ticketSchema.methods.setPriority = async function(reason, user) {
-  this.isPriority = true;
-  this.priorityReason = reason;
-  this.status = 'Priority';
-  this.addAuditLog('Priority Set', user, { reason });
-  await this.save();
-};
-
-// Pre-save middleware
-ticketSchema.pre('save', function(next) {
-  this.calculateTimes();
-  next();
-});
+// NO pre-save middleware - we'll handle calculations in the controller
 
 export default mongoose.model("Ticket", ticketSchema);
