@@ -9,28 +9,33 @@ import {
   removeUserFromCounter,
   getCountersByUser,
   assignServicesToCounter,
-  getAvailableCounters
+  getAvailableCounters,
+  resetCounterStatus,
+  resetAllCountersInZone
 } from "../controllers/counter.controller.js";
 import { authenticateToken, authorize } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Public routes (authenticated but not role-specific)
-router.get("/", authenticateToken, getCounters);
-router.get("/available", authenticateToken, getAvailableCounters);
-router.get("/:id", authenticateToken, getCounterById);
-router.get("/user/:userId", authenticateToken, getCountersByUser);
+// All routes require authentication
+router.use(authenticateToken);
+
+// Public (authenticated) routes
+router.get("/", getCounters);
+router.get("/available", getAvailableCounters);
+router.get("/user/:userId", getCountersByUser);
+router.get("/:id", getCounterById);
 
 // Admin only routes
-router.post("/", authenticateToken, authorize("Admin"), createCounter);
-router.put("/:id", authenticateToken, authorize("Admin"), updateCounter);
-router.delete("/:id", authenticateToken, authorize("Admin"), deleteCounter);
+router.post("/", authorize("Admin"), createCounter);
+router.put("/:id", authorize("Admin"), updateCounter);
+router.delete("/:id", authorize("Admin"), deleteCounter);
+router.post("/:counterId/assign-user", authorize("Admin"), assignUserToCounter);
+router.delete("/:counterId/remove-user", authorize("Admin"), removeUserFromCounter);
+router.post("/:counterId/services", authorize("Admin"), assignServicesToCounter);
 
-// User assignment routes (Admin only)
-router.post("/:counterId/assign-user", authenticateToken, authorize("Admin"), assignUserToCounter);
-router.delete("/:counterId/remove-user", authenticateToken, authorize("Admin"), removeUserFromCounter);
-
-// Service assignment routes
-router.post("/:counterId/services", authenticateToken, authorize("Admin"), assignServicesToCounter);
+// Reset routes (Admin only)
+router.post("/:counterId/reset", authorize("Admin"), resetCounterStatus);
+router.post("/zone/:zoneId/reset-all", authorize("Admin"), resetAllCountersInZone);
 
 export default router;

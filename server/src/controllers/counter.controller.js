@@ -428,3 +428,61 @@ export const getAvailableCounters = async (req, res) => {
     res.status(500).json({ message: 'Failed to get available counters' });
   }
 };
+// Add this to counter.controller.js
+export const resetCounterStatus = async (req, res) => {
+  try {
+    const { counterId } = req.params;
+    
+    const counter = await Counter.findById(counterId);
+    if (!counter) {
+      return res.status(404).json({ message: 'Counter not found' });
+    }
+    
+    counter.status = 'Available';
+    counter.currentTicket = null;
+    await counter.save();
+    
+    res.json({ 
+      success: true, 
+      message: `Counter ${counter.counterNumber} reset to available`,
+      counter
+    });
+  } catch (error) {
+    console.error('Reset counter error:', error);
+    res.status(500).json({ message: 'Failed to reset counter' });
+  }
+};
+
+export const resetAllCountersInZone = async (req, res) => {
+  try {
+    const { zoneId } = req.params;
+    
+    const zone = await Zone.findById(zoneId);
+    if (!zone) {
+      return res.status(404).json({ message: 'Zone not found' });
+    }
+    
+    const groups = await Group.find({ zone: zoneId });
+    const groupIds = groups.map(g => g._id);
+    
+    const result = await Counter.updateMany(
+      { group: { $in: groupIds } },
+      { $set: { status: 'Available', currentTicket: null } }
+    );
+    
+    // Reset any stuck tickets
+    await Ticket.updateMany(
+      { zone: zoneId, status: 'Serving' },
+      { $set: { status: 'Waiting', calledAt: null } }
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Reset ${result.modifiedCount} counters in ${zone.name}`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    console.error('Reset zone counters error:', error);
+    res.status(500).json({ message: 'Failed to reset counters' });
+  }
+};

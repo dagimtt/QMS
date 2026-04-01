@@ -416,7 +416,20 @@ const handleCallNext = async () => {
             </table>
           </div>
         </div>
+{waitingTickets.length > 0 && (
+  <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+    <p className="text-sm text-blue-800">
+      📋 Queue Status: {waitingTickets.length} ticket(s) waiting
+    </p>
+    {waitingTickets[0] && (
+      <p className="text-xs text-blue-600 mt-1">
+        Next ticket: #{waitingTickets[0].displayNumber} (Waiting {waitingTickets[0].waitingTime} min)
+      </p>
+    )}
+  </div>
+)}
       </div>
+      
     </div>
   );
 };

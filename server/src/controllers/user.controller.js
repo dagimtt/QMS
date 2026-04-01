@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import Counter from "../models/Counter.js";
+import bcrypt from "bcryptjs";
 
 export const getUsers = async (req, res) => {
   try {
@@ -59,12 +60,18 @@ export const createUser = async (req, res) => {
     // Generate username from email if not provided
     const finalUsername = username || email.split('@')[0];
     
-    // Create user
+    // Hash password manually
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    console.log('Password hashed successfully');
+    
+    // Create user with hashed password
     const user = new User({
       username: finalUsername,
       fullName,
       email,
-      password,
+      password: hashedPassword, // Use pre-hashed password
       role: role || 'Verifier',
       counter: counter || null,
       isActive: true
@@ -156,7 +163,9 @@ export const changePassword = async (req, res) => {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }
     
-    user.password = newPassword;
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
     await user.save();
     
     res.json({ success: true, message: 'Password changed successfully' });

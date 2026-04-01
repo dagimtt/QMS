@@ -5,13 +5,7 @@ import Counter from "../models/Counter.js";
 import Zone from "../models/Zone.js";
 import Group from "../models/Group.js";
 
-const stepToCounterType = {
-  'Verification': 'Verifier',
-  'Validation': 'Validator',
-  'Authorization': 'Authorizer'
-};
-
-// Create new ticket - assign to available counter in same zone
+// Create new ticket - NO PRE-ASSIGNMENT to specific counter
 export const createTicket = async (req, res) => {
   try {
     const { serviceId, customerName, customerPhone, customerEmail, zoneId } = req.body;
@@ -28,7 +22,6 @@ export const createTicket = async (req, res) => {
     if (zoneId) {
       zone = await Zone.findById(zoneId);
     } else {
-      // Find first active zone
       zone = await Zone.findOne({ isActive: true });
     }
     
@@ -38,26 +31,19 @@ export const createTicket = async (req, res) => {
     
     console.log('Using zone:', zone.name, zone.code);
     
-    // Find available Verifier counter in this zone
-    const verifierCounter = await zone.getAvailableCounter('Verifier');
+    // Get group for this zone
+    const groups = await Group.find({ zone: zone._id });
+    const group = groups[0];
     
-    if (!verifierCounter) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `No available verifier in ${zone.name}. Please try again later.` 
-      });
+    if (!group) {
+      return res.status(404).json({ success: false, message: 'No group found in zone' });
     }
-    
-    console.log('Assigned to counter:', verifierCounter.counterNumber);
-    
-    // Get group for this counter
-    const group = await Group.findById(verifierCounter.group);
     
     // Generate ticket number
     const ticketNumber = await Ticket.generateTicketNumber(zone.code, group.code);
     const displayNumber = parseInt(ticketNumber.slice(-4)).toString();
     
-    // Create ticket
+    // Create ticket - NO counter assignment at creation
     const ticket = new Ticket({
       ticketNumber,
       zone: zone._id,
@@ -66,7 +52,7 @@ export const createTicket = async (req, res) => {
       status: 'Waiting',
       currentStep: 'Verification',
       assignedTo: 'Verifier',
-      assignedCounter: verifierCounter._id,
+      assignedCounter: null, // Not assigned to any counter yet
       customerInfo: {
         name: customerName || '',
         phone: customerPhone || '',
@@ -77,23 +63,22 @@ export const createTicket = async (req, res) => {
         userRole: 'Kiosk',
         details: { 
           service: service.name, 
-          counter: verifierCounter.counterNumber,
-          zone: zone.name
+          zone: zone.name,
+          queuePosition: await getQueuePosition(zone._id, 'Verifier')
         }
       }]
     });
     
     await ticket.save();
     
-    // Add to counter's queue
-    verifierCounter.queue = verifierCounter.queue || [];
-    verifierCounter.queue.push(ticket._id);
-    await verifierCounter.save();
+    console.log(`Ticket ${ticketNumber} created and added to shared queue`);
     
     const populatedTicket = await Ticket.findById(ticket._id)
       .populate('service', 'name code')
-      .populate('assignedCounter', 'counterNumber name type')
       .populate('zone', 'name code');
+    
+    // Calculate queue position
+    const queuePosition = await getQueuePosition(zone._id, 'Verifier');
     
     res.status(201).json({
       success: true,
@@ -101,9 +86,10 @@ export const createTicket = async (req, res) => {
         ...populatedTicket.toObject(),
         number: displayNumber,
         displayNumber: displayNumber,
-        zoneName: zone.name
-      },
-      message: `Ticket ${displayNumber} created. Please go to ${verifierCounter.name || 'Counter ' + verifierCounter.counterNumber} in ${zone.name}`
+        zoneName: zone.name,
+        queuePosition: queuePosition,
+        message: `Ticket ${displayNumber} created. You are number ${queuePosition} in queue.`
+      }
     });
   } catch (error) {
     console.error('Create ticket error:', error);
@@ -111,7 +97,18 @@ export const createTicket = async (req, res) => {
   }
 };
 
-// Call next ticket for a counter - only from same zone
+// Helper function to get queue position
+async function getQueuePosition(zoneId, assignedTo) {
+  const waitingCount = await Ticket.countDocuments({
+    zone: zoneId,
+    assignedTo: assignedTo,
+    status: 'Waiting',
+    assignedCounter: null
+  });
+  return waitingCount + 1;
+}
+
+// Call next ticket - GET FROM SHARED QUEUE
 export const callNextTicket = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -121,25 +118,35 @@ export const callNextTicket = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Counter not found' });
     }
     
-    // Get zone for this counter
     const group = await Group.findById(counter.group).populate('zone');
     const zone = group.zone;
     
     console.log(`Calling next ticket for ${counter.type} in zone ${zone.name}`);
     
-    // Find next waiting ticket in the same zone, assigned to this counter type
+    // Determine current step based on counter type
+    let currentStep;
+    if (counter.type === 'Verifier') currentStep = 'Verification';
+    else if (counter.type === 'Validator') currentStep = 'Validation';
+    else if (counter.type === 'Authorizer') currentStep = 'Authorization';
+    else currentStep = 'Verification';
+    
+    // Find the next waiting ticket from SHARED QUEUE (not assigned to any counter)
     const nextTicket = await Ticket.findOne({
-      assignedCounter: counterId,
+      zone: zone._id,
+      assignedTo: counter.type,
       status: 'Waiting',
-      currentStep: counter.type === 'Verifier' ? 'Verification' : 
-                    counter.type === 'Validator' ? 'Validation' : 'Authorization'
+      currentStep: currentStep,
+      assignedCounter: null // Only get unassigned tickets
     }).sort({ isPriority: -1, createdAt: 1 });
     
     if (!nextTicket) {
       return res.status(404).json({ success: false, message: 'No tickets waiting in queue' });
     }
     
-    // Update ticket
+    console.log(`Found ticket: ${nextTicket.ticketNumber}, assigning to counter ${counter.counterNumber}`);
+    
+    // Assign this ticket to the calling counter
+    nextTicket.assignedCounter = counter._id;
     nextTicket.status = 'Serving';
     nextTicket.calledAt = new Date();
     nextTicket.calledCount = (nextTicket.calledCount || 0) + 1;
@@ -173,11 +180,11 @@ export const callNextTicket = async (req, res) => {
     });
   } catch (error) {
     console.error('Call next ticket error:', error);
-    res.status(500).json({ success: false, message: 'Failed to call next ticket' });
+    res.status(500).json({ success: false, message: 'Failed to call next ticket', error: error.message });
   }
 };
 
-// Complete ticket and move to next step within same zone
+// Complete ticket and move to next step
 export const completeTicket = async (req, res) => {
   try {
     const { ticketId } = req.params;
@@ -187,7 +194,6 @@ export const completeTicket = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Ticket not found' });
     }
     
-    // Get zone for this ticket
     const zone = await Zone.findById(ticket.zone);
     if (!zone) {
       return res.status(404).json({ success: false, message: 'Zone not found' });
@@ -195,11 +201,24 @@ export const completeTicket = async (req, res) => {
     
     const currentStep = ticket.currentStep;
     
+    const nextStepMap = {
+      'Verification': 'Validation',
+      'Validation': 'Authorization',
+      'Authorization': 'Completed'
+    };
+    
+    const counterTypeMap = {
+      'Verification': 'Verifier',
+      'Validation': 'Validator',
+      'Authorization': 'Authorizer'
+    };
+    
     if (currentStep === 'Authorization') {
       // Final step - complete the ticket
       ticket.status = 'Completed';
       ticket.completedAt = new Date();
       ticket.serviceTime = ticket.calledAt ? Math.floor((ticket.completedAt - ticket.calledAt) / 60000) : 0;
+      ticket.assignedCounter = null; // Clear assignment
       
       ticket.auditLog.push({
         action: 'Ticket Completed',
@@ -229,28 +248,16 @@ export const completeTicket = async (req, res) => {
       });
     }
     
-    // Move to next step - find available counter of next type WITHIN SAME ZONE
-    const nextStep = currentStep === 'Verification' ? 'Validation' : 'Authorization';
-    const nextCounterType = stepToCounterType[nextStep];
+    // Move to next step - Release ticket to SHARED QUEUE
+    const nextStep = nextStepMap[currentStep];
+    const requiredCounterType = counterTypeMap[nextStep];
     
-    console.log(`Moving ticket to ${nextStep} in zone ${zone.name}`);
+    console.log(`Moving ticket from ${currentStep} to ${nextStep} queue in zone ${zone.name}`);
     
-    // Find available counter of next type in the same zone
-    const nextCounter = await zone.getAvailableCounter(nextCounterType);
-    
-    if (!nextCounter) {
-      return res.status(400).json({
-        success: false,
-        message: `No available ${nextCounterType} in ${zone.name}. Please try again later.`
-      });
-    }
-    
-    console.log(`Assigned to ${nextCounterType} counter: ${nextCounter.counterNumber}`);
-    
-    // Update ticket for next step
+    // Update ticket for next step - DO NOT assign to specific counter
     ticket.currentStep = nextStep;
-    ticket.assignedTo = nextCounterType;
-    ticket.assignedCounter = nextCounter._id;
+    ticket.assignedTo = requiredCounterType;
+    ticket.assignedCounter = null; // Release to shared queue
     ticket.status = 'Waiting';
     ticket.calledAt = null;
     
@@ -260,18 +267,13 @@ export const completeTicket = async (req, res) => {
       userRole: req.user.role,
       details: { 
         completedStep: currentStep, 
-        nextStep, 
-        nextCounter: nextCounter.counterNumber,
-        zone: zone.name
+        nextStep,
+        zone: zone.name,
+        message: `Ticket moved to ${requiredCounterType} queue`
       }
     });
     
     await ticket.save();
-    
-    // Add to next counter's queue
-    nextCounter.queue = nextCounter.queue || [];
-    nextCounter.queue.push(ticket._id);
-    await nextCounter.save();
     
     // Clear current counter's current ticket
     await Counter.updateMany(
@@ -279,21 +281,24 @@ export const completeTicket = async (req, res) => {
       { $unset: { currentTicket: "" }, status: 'Available' }
     );
     
+    // Calculate new queue position
+    const queuePosition = await getQueuePosition(zone._id, requiredCounterType);
+    
     const formattedTicket = {
       ...ticket.toObject(),
       number: ticket.ticketNumber.slice(-4),
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
-      nextCounterName: nextCounter.name || `Counter ${nextCounter.counterNumber}`
+      queuePosition: queuePosition
     };
     
     res.json({
       success: true,
       ticket: formattedTicket,
-      message: `Ticket ${formattedTicket.displayNumber} moved to ${nextCounterType} (${nextCounter.name || 'Counter ' + nextCounter.counterNumber}) in ${zone.name}`
+      message: `Ticket ${formattedTicket.displayNumber} moved to ${requiredCounterType} queue. Position: ${queuePosition}`
     });
   } catch (error) {
     console.error('Complete ticket error:', error);
-    res.status(500).json({ success: false, message: 'Failed to complete ticket' });
+    res.status(500).json({ success: false, message: 'Failed to complete ticket', error: error.message });
   }
 };
 
@@ -314,6 +319,7 @@ export const markTicketAbsent = async (req, res) => {
     const zone = await Zone.findById(ticket.zone);
     
     ticket.status = 'No-Show';
+    ticket.assignedCounter = null; // Release from counter
     ticket.auditLog.push({
       action: 'Ticket Marked Absent',
       user: req.user._id,
@@ -346,7 +352,60 @@ export const markTicketAbsent = async (req, res) => {
   }
 };
 
-// Get counter dashboard with zone info
+// Escalate ticket
+export const escalateTicket = async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+    const { reason } = req.body;
+    
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+    
+    const zone = await Zone.findById(ticket.zone);
+    
+    ticket.status = 'Escalated';
+    ticket.assignedCounter = null; // Release from counter
+    ticket.escalationDetails = {
+      reason: reason || 'No reason provided',
+      escalatedBy: req.user._id,
+      escalatedAt: new Date()
+    };
+    
+    ticket.auditLog.push({
+      action: 'Ticket Escalated',
+      user: req.user._id,
+      userRole: req.user.role,
+      timestamp: new Date(),
+      details: { reason: reason || 'No reason provided', zone: zone?.name }
+    });
+    
+    await ticket.save();
+    
+    await Counter.updateMany(
+      { currentTicket: ticketId },
+      { $unset: { currentTicket: "" }, status: 'Available' }
+    );
+    
+    const formattedTicket = {
+      ...ticket.toObject(),
+      number: ticket.ticketNumber.slice(-4),
+      displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString()
+    };
+    
+    res.json({
+      success: true,
+      ticket: formattedTicket,
+      message: `Ticket ${formattedTicket.displayNumber} escalated`
+    });
+  } catch (error) {
+    console.error('Escalate ticket error:', error);
+    res.status(500).json({ success: false, message: 'Failed to escalate ticket' });
+  }
+};
+
+// Get counter dashboard - Show shared queue
 export const getCounterDashboard = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -364,7 +423,7 @@ export const getCounterDashboard = async (req, res) => {
     
     const zone = counter.group?.zone;
     
-    // Get current ticket
+    // Get current ticket assigned to this counter
     let currentTicket = null;
     if (counter.currentTicket) {
       currentTicket = await Ticket.findById(counter.currentTicket)
@@ -372,25 +431,28 @@ export const getCounterDashboard = async (req, res) => {
         .populate('customerInfo');
     }
     
-    // Get waiting tickets for this counter in same zone
+    // Get waiting tickets from SHARED QUEUE (not assigned to any counter)
     const waitingTickets = await Ticket.find({
-      assignedCounter: counterId,
+      zone: zone?._id,
+      assignedTo: counter.type,
       status: 'Waiting',
-      zone: zone?._id
+      currentStep: counter.type === 'Verifier' ? 'Verification' : 
+                    counter.type === 'Validator' ? 'Validation' : 'Authorization',
+      assignedCounter: null // Only unassigned tickets
     })
     .populate('service', 'name code')
     .populate('customerInfo')
     .sort({ isPriority: -1, createdAt: 1 })
     .limit(20);
     
-    const formattedWaiting = waitingTickets.map(ticket => ({
+    const formattedWaiting = waitingTickets.map((ticket, index) => ({
       ...ticket.toObject(),
       number: ticket.ticketNumber.slice(-4),
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
-      waitingTime: Math.floor((new Date() - new Date(ticket.createdAt)) / 60000)
+      waitingTime: Math.floor((new Date() - new Date(ticket.createdAt)) / 60000),
+      queuePosition: index + 1
     }));
     
-    // Format current ticket
     let formattedCurrent = null;
     if (currentTicket) {
       formattedCurrent = {
@@ -401,7 +463,6 @@ export const getCounterDashboard = async (req, res) => {
       };
     }
     
-    // Get statistics for this zone
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -430,6 +491,7 @@ export const getCounterDashboard = async (req, res) => {
       },
       currentTicket: formattedCurrent,
       waitingTickets: formattedWaiting,
+      queueLength: waitingTickets.length,
       stats: stats[0] || { total: 0, completed: 0, waiting: 0, serving: 0, noShow: 0 },
       timestamp: new Date()
     });
@@ -439,105 +501,7 @@ export const getCounterDashboard = async (req, res) => {
   }
 };
 
-// Get zone queue status
-export const getZoneQueueStatus = async (req, res) => {
-  try {
-    const { zoneId } = req.params;
-    
-    const zone = await Zone.findById(zoneId);
-    if (!zone) {
-      return res.status(404).json({ success: false, message: 'Zone not found' });
-    }
-    
-    // Get waiting tickets by step
-    const waitingByStep = await Ticket.aggregate([
-      { $match: { zone: new mongoose.Types.ObjectId(zoneId), status: 'Waiting' } },
-      { $group: { _id: '$currentStep', count: { $sum: 1 } } }
-    ]);
-    
-    // Get serving tickets
-    const servingTickets = await Ticket.find({
-      zone: zoneId,
-      status: 'Serving'
-    }).populate('assignedCounter', 'counterNumber name type')
-      .populate('service', 'name code');
-    
-    // Get available counters by type
-    const verifiers = await zone.getCountersByType('Verifier');
-    const validators = await zone.getCountersByType('Validator');
-    const authorizers = await zone.getCountersByType('Authorizer');
-    
-    res.json({
-      success: true,
-      zone: { name: zone.name, code: zone.code },
-      waiting: waitingByStep,
-      serving: servingTickets.map(t => ({
-        ...t.toObject(),
-        displayNumber: t.ticketNumber.slice(-4)
-      })),
-      availableCounters: {
-        verifiers: verifiers.length,
-        validators: validators.length,
-        authorizers: authorizers.length
-      }
-    });
-  } catch (error) {
-    console.error('Get zone queue status error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get zone queue status' });
-  }
-};
-// Add these exports at the end of the file
-
-export const escalateTicket = async (req, res) => {
-  try {
-    const { ticketId } = req.params;
-    const { reason } = req.body;
-    
-    const ticket = await Ticket.findById(ticketId);
-    if (!ticket) {
-      return res.status(404).json({ success: false, message: 'Ticket not found' });
-    }
-    
-    ticket.status = 'Escalated';
-    ticket.escalationDetails = {
-      reason: reason || 'No reason provided',
-      escalatedBy: req.user._id,
-      escalatedAt: new Date()
-    };
-    
-    ticket.auditLog.push({
-      action: 'Ticket Escalated',
-      user: req.user._id,
-      userRole: req.user.role,
-      timestamp: new Date(),
-      details: { reason: reason || 'No reason provided' }
-    });
-    
-    await ticket.save();
-    
-    // Clear counter's current ticket
-    await Counter.updateMany(
-      { currentTicket: ticketId },
-      { $unset: { currentTicket: "" }, status: 'Available' }
-    );
-    
-    const formattedTicket = {
-      ...ticket.toObject(),
-      number: ticket.ticketNumber.slice(-4),
-      displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString()
-    };
-    
-    res.json({
-      success: true,
-      ticket: formattedTicket,
-      message: `Ticket ${formattedTicket.displayNumber} escalated`
-    });
-  } catch (error) {
-    console.error('Escalate ticket error:', error);
-    res.status(500).json({ success: false, message: 'Failed to escalate ticket' });
-  }
-};
-
+// Get all tickets
 export const getTickets = async (req, res) => {
   try {
     const { status, zone, limit = 100, page = 1 } = req.query;
@@ -578,6 +542,7 @@ export const getTickets = async (req, res) => {
   }
 };
 
+// Get ticket by ID
 export const getTicketById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -601,5 +566,50 @@ export const getTicketById = async (req, res) => {
   } catch (error) {
     console.error('Get ticket error:', error);
     res.status(500).json({ success: false, message: 'Failed to get ticket' });
+  }
+};
+
+// Get zone queue status
+export const getZoneQueueStatus = async (req, res) => {
+  try {
+    const { zoneId } = req.params;
+    
+    const zone = await Zone.findById(zoneId);
+    if (!zone) {
+      return res.status(404).json({ success: false, message: 'Zone not found' });
+    }
+    
+    const waitingByStep = await Ticket.aggregate([
+      { $match: { zone: new mongoose.Types.ObjectId(zoneId), status: 'Waiting', assignedCounter: null } },
+      { $group: { _id: '$currentStep', count: { $sum: 1 } } }
+    ]);
+    
+    const servingTickets = await Ticket.find({
+      zone: zoneId,
+      status: 'Serving'
+    }).populate('assignedCounter', 'counterNumber name type')
+      .populate('service', 'name code');
+    
+    const verifiers = await zone.getCountersByType('Verifier');
+    const validators = await zone.getCountersByType('Validator');
+    const authorizers = await zone.getCountersByType('Authorizer');
+    
+    res.json({
+      success: true,
+      zone: { name: zone.name, code: zone.code },
+      waiting: waitingByStep,
+      serving: servingTickets.map(t => ({
+        ...t.toObject(),
+        displayNumber: t.ticketNumber.slice(-4)
+      })),
+      availableCounters: {
+        verifiers: verifiers.filter(c => c.status === 'Available').length,
+        validators: validators.filter(c => c.status === 'Available').length,
+        authorizers: authorizers.filter(c => c.status === 'Available').length
+      }
+    });
+  } catch (error) {
+    console.error('Get zone queue status error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get zone queue status' });
   }
 };
