@@ -75,11 +75,7 @@ const Login = () => {
           </button>
         </form>
         
-        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-          <p className="text-sm text-gray-600 text-center mb-2">Demo Credentials:</p>
-          <p className="text-xs text-gray-500 text-center">Email: admin@qms.com</p>
-          <p className="text-xs text-gray-500 text-center">Password: Admin123!</p>
-        </div>
+
       </div>
     </div>
   );

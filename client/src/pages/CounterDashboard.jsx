@@ -211,7 +211,6 @@ const handleCallNext = async () => {
               </p>
             </div>
             <div className="text-right">
-              <p className="text-sm text-gray-600">Logged in as</p>
               <p className="font-medium text-gray-900">{user?.fullName}</p>
               <p className="text-sm text-gray-500">{user?.role}</p>
             </div>

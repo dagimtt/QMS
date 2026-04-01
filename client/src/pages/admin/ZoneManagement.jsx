@@ -92,7 +92,6 @@ const ZoneManagement = () => {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Zone Management</h1>
-          <p className="text-gray-600 mt-1">Manage service zones and their configurations</p>
         </div>
         <button
           onClick={() => setIsModalOpen(true)}

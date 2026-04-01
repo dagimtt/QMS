@@ -17,19 +17,7 @@ const zoneSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    trim: true,
-    maxlength: [500, 'Description cannot exceed 500 characters']
-  },
-  displayScreen: {
-    type: String,
-    trim: true,
-    validate: {
-      validator: function(v) {
-        if (!v) return true;
-        return /^(http|https):\/\/[^ "]+$/.test(v);
-      },
-      message: 'Invalid URL format for display screen'
-    }
+    trim: true
   },
   groups: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -40,58 +28,45 @@ const zoneSchema = new mongoose.Schema({
     default: true
   },
   settings: {
-    announcementVolume: {
-      type: Number,
-      default: 70,
-      min: 0,
-      max: 100
-    },
-    displayRefreshInterval: {
-      type: Number,
-      default: 5,
-      min: 1,
-      max: 60
-    },
-    audioEnabled: {
-      type: Boolean,
-      default: true
-    }
-  },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    announcementVolume: { type: Number, default: 70 },
+    displayRefreshInterval: { type: Number, default: 5 },
+    audioEnabled: { type: Boolean, default: true }
   }
-}, { 
-  timestamps: true 
-});
+}, { timestamps: true });
 
-// Virtual for total counters in zone
-zoneSchema.virtual('totalCounters').get(async function() {
-  if (!this.groups || this.groups.length === 0) return 0;
+// Method to get available counter by type within zone
+zoneSchema.methods.getAvailableCounter = async function(counterType) {
   const Group = mongoose.model('Group');
-  const groups = await Group.find({ _id: { $in: this.groups } });
-  return groups.reduce((sum, group) => sum + (group.counters?.length || 0), 0);
-});
-
-// Method to check if zone can be deleted
-zoneSchema.methods.canDelete = async function() {
-  const Group = mongoose.model('Group');
-  const groupsCount = await Group.countDocuments({ zone: this._id });
-  return groupsCount === 0;
+  const Counter = mongoose.model('Counter');
+  
+  // Find all groups in this zone
+  const groups = await Group.find({ zone: this._id });
+  const groupIds = groups.map(g => g._id);
+  
+  // Find available counter of specified type in this zone
+  const counter = await Counter.findOne({
+    group: { $in: groupIds },
+    type: counterType,
+    isActive: true,
+    status: 'Available'
+  }).populate('group');
+  
+  return counter;
 };
 
-// Pre-remove middleware
-zoneSchema.pre('remove', async function(next) {
-  try {
-    const Group = mongoose.model('Group');
-    const groups = await Group.find({ zone: this._id });
-    if (groups.length > 0) {
-      next(new Error('Cannot delete zone with existing groups. Remove all groups first.'));
-    }
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
+// Method to get all counters by type within zone
+zoneSchema.methods.getCountersByType = async function(counterType) {
+  const Group = mongoose.model('Group');
+  const Counter = mongoose.model('Counter');
+  
+  const groups = await Group.find({ zone: this._id });
+  const groupIds = groups.map(g => g._id);
+  
+  return await Counter.find({
+    group: { $in: groupIds },
+    type: counterType,
+    isActive: true
+  }).populate('group');
+};
 
 export default mongoose.model("Zone", zoneSchema);
