@@ -1,4 +1,4 @@
-import User from "../models/User.js";
+import User, { rolePermissions } from "../models/User.js";
 import Counter from "../models/Counter.js";
 import bcrypt from "bcryptjs";
 
@@ -35,7 +35,7 @@ export const getUserById = async (req, res) => {
 
 export const createUser = async (req, res) => {
   try {
-    const { username, fullName, email, password, role, counter } = req.body;
+    const { username, fullName, email, password, role, counter, permissions } = req.body;
     
     console.log('Creating user:', { email, fullName, role });
     
@@ -46,35 +46,47 @@ export const createUser = async (req, res) => {
       });
     }
     
-    // Check if user already exists
-    const existingUser = await User.findOne({ 
-      $or: [{ email }, { username }] 
-    });
-    
-    if (existingUser) {
+    // Check if email already exists
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
       return res.status(400).json({ 
-        message: 'User already exists with this email or username' 
+        message: 'User already exists with this email' 
       });
     }
     
-    // Generate username from email if not provided
-    const finalUsername = username || email.split('@')[0];
+    // Generate unique username
+    let finalUsername = username || email.split('@')[0];
+    let usernameExists = await User.findOne({ username: finalUsername });
+    let counter_suffix = 1;
     
-    // Hash password manually
+    while (usernameExists) {
+      finalUsername = `${email.split('@')[0]}${counter_suffix}`;
+      usernameExists = await User.findOne({ username: finalUsername });
+      counter_suffix++;
+    }
+    
+    console.log('Generated unique username:', finalUsername);
+    
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
-    console.log('Password hashed successfully');
+    // Set permissions based on role or custom permissions
+    let userPermissions = permissions;
+    if (!userPermissions || userPermissions.length === 0) {
+      userPermissions = rolePermissions[role] || [];
+    }
     
-    // Create user with hashed password
+    // Create user
     const user = new User({
       username: finalUsername,
       fullName,
       email,
-      password: hashedPassword, // Use pre-hashed password
+      password: hashedPassword,
       role: role || 'Verifier',
       counter: counter || null,
-      isActive: true
+      isActive: true,
+      permissions: userPermissions
     });
     
     await user.save();
@@ -84,7 +96,7 @@ export const createUser = async (req, res) => {
     delete userResponse.password;
     delete userResponse.refreshToken;
     
-    console.log('User created successfully:', userResponse.email);
+    console.log('User created successfully:', userResponse.email, 'Role:', userResponse.role);
     
     res.status(201).json({ 
       success: true, 
@@ -103,7 +115,7 @@ export const createUser = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, role, counter, isActive } = req.body;
+    const { fullName, role, counter, isActive, permissions } = req.body;
     
     const user = await User.findById(id);
     if (!user) {
@@ -111,9 +123,16 @@ export const updateUser = async (req, res) => {
     }
     
     if (fullName) user.fullName = fullName;
-    if (role) user.role = role;
+    if (role) {
+      user.role = role;
+      // Update permissions based on new role if not explicitly set
+      if (!permissions) {
+        user.permissions = rolePermissions[role] || [];
+      }
+    }
     if (counter !== undefined) user.counter = counter;
     if (isActive !== undefined) user.isActive = isActive;
+    if (permissions) user.permissions = permissions;
     
     await user.save();
     
@@ -241,5 +260,63 @@ export const getUnassignedUsers = async (req, res) => {
   } catch (error) {
     console.error('Get unassigned users error:', error);
     res.status(500).json({ message: 'Failed to get unassigned users' });
+  }
+};
+
+// Get role permissions mapping
+export const getRolePermissions = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      permissions: rolePermissions
+    });
+  } catch (error) {
+    console.error('Get role permissions error:', error);
+    res.status(500).json({ message: 'Failed to get role permissions' });
+  }
+};
+
+// Update user permissions
+export const updateUserPermissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { permissions } = req.body;
+    
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    user.permissions = permissions;
+    await user.save();
+    
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.refreshToken;
+    
+    res.json({ 
+      success: true, 
+      user: userResponse,
+      message: 'User permissions updated successfully'
+    });
+  } catch (error) {
+    console.error('Update user permissions error:', error);
+    res.status(500).json({ message: 'Failed to update user permissions' });
+  }
+};
+
+// Get users by role
+export const getUsersByRole = async (req, res) => {
+  try {
+    const { role } = req.params;
+    
+    const users = await User.find({ role, isActive: true })
+      .select('-password -refreshToken')
+      .populate('counter');
+    
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error('Get users by role error:', error);
+    res.status(500).json({ message: 'Failed to get users by role' });
   }
 };

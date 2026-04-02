@@ -187,7 +187,7 @@ const TicketManagement = () => {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ticket #</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Service</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Step</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Counter</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -211,7 +211,7 @@ const TicketManagement = () => {
                       <div className="text-sm text-gray-900">{ticket.service?.name}</div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">{ticket.customerName || 'Walk-in'}</div>
+                      <div className="text-sm text-gray-900">{ticket.currentStep}</div>
                       {ticket.customerPhone && (
                         <div className="text-xs text-gray-500">{ticket.customerPhone}</div>
                       )}
@@ -231,32 +231,7 @@ const TicketManagement = () => {
                         {new Date(ticket.createdAt).toLocaleString()}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      {ticket.status === 'Waiting' && (
-                        <button
-                          onClick={() => handleCallTicket(ticket._id)}
-                          className="text-green-600 hover:text-green-900 mr-3"
-                        >
-                          Call
-                        </button>
-                      )}
-                      {ticket.status === 'Serving' && (
-                        <button
-                          onClick={() => handleCompleteTicket(ticket._id)}
-                          className="text-blue-600 hover:text-blue-900 mr-3"
-                        >
-                          Complete
-                        </button>
-                      )}
-                      {ticket.status !== 'Completed' && ticket.status !== 'Escalated' && (
-                        <button
-                          onClick={() => handleEscalateTicket(ticket._id)}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Escalate
-                        </button>
-                      )}
-                    </td>
+                    
                   </tr>
                 ))
               )}

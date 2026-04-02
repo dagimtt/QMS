@@ -29,26 +29,20 @@ export const login = async (req, res) => {
     
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('User not found:', email);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
-    
-    console.log('User found:', { email: user.email, role: user.role });
     
     if (!user.isActive) {
       return res.status(403).json({ message: 'Account is deactivated' });
     }
     
     const isPasswordValid = await user.comparePassword(password);
-    console.log('Password valid:', isPasswordValid);
-    
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     
     const { accessToken, refreshToken } = generateTokens(user._id);
     
-    // Update user without using save() - use findByIdAndUpdate to avoid pre-save hooks
     await User.findByIdAndUpdate(user._id, {
       $set: {
         refreshToken: refreshToken,
@@ -63,10 +57,11 @@ export const login = async (req, res) => {
       role: user.role,
       isActive: user.isActive,
       username: user.username,
-      counter: user.counter
+      counter: user.counter,
+      permissions: user.permissions || []
     };
     
-    console.log('Login successful:', userResponse.email);
+    console.log('Login successful:', userResponse.email, 'Role:', userResponse.role);
     
     res.json({
       success: true,
@@ -97,7 +92,6 @@ export const refreshToken = async (req, res) => {
     
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
     
-    // Update without using save()
     await User.findByIdAndUpdate(user._id, {
       $set: { refreshToken: newRefreshToken }
     });

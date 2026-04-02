@@ -8,9 +8,12 @@ import {
   escalateTicket,
   markTicketAbsent,
   getCounterDashboard,
-  getZoneQueueStatus
+  getZoneQueueStatus,
+  getEscalatedTickets,
+  resolveEscalation,
+  getSupervisorDashboard
 } from "../controllers/ticket.controller.js";
-import { authenticateToken } from "../middleware/auth.js";
+import { authenticateToken, authorize } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -23,6 +26,11 @@ router.post("/:counterId/call-next", authenticateToken, callNextTicket);
 router.put("/:ticketId/complete", authenticateToken, completeTicket);
 router.post("/:ticketId/absent", authenticateToken, markTicketAbsent);
 router.post("/:ticketId/escalate", authenticateToken, escalateTicket);
+
+// Supervisor operations (only for Supervisors and Admins)
+router.get("/supervisor/:zoneId/dashboard", authenticateToken, authorize("Supervisor", "Admin"), getSupervisorDashboard);
+router.get("/escalated/:zoneId", authenticateToken, authorize("Supervisor", "Admin"), getEscalatedTickets);
+router.post("/:ticketId/resolve-escalation", authenticateToken, authorize("Supervisor", "Admin"), resolveEscalation);
 
 // Zone operations
 router.get("/zone/:zoneId/queue", authenticateToken, getZoneQueueStatus);

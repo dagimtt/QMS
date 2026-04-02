@@ -7,7 +7,10 @@ import {
   deactivateUser,
   changePassword,
   assignCounterToUser,
-  getUnassignedUsers
+  getUnassignedUsers,
+  getRolePermissions,
+  updateUserPermissions,
+  getUsersByRole
 } from "../controllers/user.controller.js";
 import { authenticateToken, authorize } from "../middleware/auth.js";
 
@@ -19,7 +22,10 @@ router.use(authenticateToken);
 // Admin only routes
 router.get("/", authorize("Admin"), getUsers);
 router.get("/unassigned", authorize("Admin"), getUnassignedUsers);
+router.get("/role-permissions", authorize("Admin"), getRolePermissions);
+router.get("/by-role/:role", authorize("Admin"), getUsersByRole);
 router.post("/", authorize("Admin"), createUser);
+router.put("/:id/permissions", authorize("Admin"), updateUserPermissions);
 
 // Routes with params
 router.get("/:id", authorize("Admin", "Supervisor"), getUserById);

@@ -237,10 +237,6 @@ const handleCallNext = async () => {
             <p className="text-2xl font-bold text-purple-600">{stats.serving}</p>
             <p className="text-sm text-gray-600">Serving</p>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 text-center">
-            <p className="text-2xl font-bold text-gray-600">{stats.noShow}</p>
-            <p className="text-sm text-gray-600">No-Show</p>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

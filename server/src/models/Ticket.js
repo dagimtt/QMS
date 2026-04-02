@@ -46,6 +46,34 @@ const ticketSchema = new mongoose.Schema({
     ref: 'Counter',
     index: true
   },
+  // 
+escalationDetails: {
+  reason: String,
+  escalatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  escalatedAt: Date,
+  originalCounter: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Counter'
+  },
+  originalVerifier: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  resolvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  resolvedAt: Date,
+  resolution: String,
+  action: {
+    type: String,
+    enum: ['resolved', 'returned'],
+    default: 'resolved'
+  }
+},
   assignedTo: {
     type: String,
     enum: ['Verifier', 'Validator', 'Authorizer'],
