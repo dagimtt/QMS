@@ -103,10 +103,7 @@ const KioskSetup = () => {
         {/* Zone Selection */}
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden mb-6">
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4">
-            <h2 className="text-xl font-semibold text-white flex items-center">
-              <MapPinIcon className="h-5 w-5 mr-2" />
-              Select Zone
-            </h2>
+           
             <p className="text-blue-100 text-sm mt-1">Choose which zone this kiosk will serve</p>
           </div>
           
@@ -151,27 +148,7 @@ const KioskSetup = () => {
           </div>
         </div>
 
-        {/* Kiosk Name (Optional) */}
-        <div className="bg-white rounded-2xl shadow-xl overflow-hidden mb-6">
-          <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-6 py-4">
-            <h2 className="text-xl font-semibold text-white flex items-center">
-              <ComputerDesktopIcon className="h-5 w-5 mr-2" />
-              Kiosk Name (Optional)
-            </h2>
-            <p className="text-gray-300 text-sm mt-1">Give this kiosk a name for identification</p>
-          </div>
-          
-          <div className="p-6">
-            <input
-              type="text"
-              value={kioskName}
-              onChange={(e) => setKioskName(e.target.value)}
-              placeholder="e.g., Main Entrance Kiosk, Left Wing Kiosk"
-              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg focus:outline-none focus:border-blue-500 transition-all"
-            />
-            <p className="text-xs text-gray-500 mt-2">This name will appear on the kiosk screen</p>
-          </div>
-        </div>
+       
 
         {/* Action Buttons */}
         <div className="flex space-x-4">
@@ -197,12 +174,7 @@ const KioskSetup = () => {
         </div>
 
         {/* Info Message */}
-        <div className="mt-8 bg-blue-50 rounded-xl p-4 border border-blue-200">
-          <p className="text-sm text-blue-800 text-center">
-            💡 <strong>Tip:</strong> Once you select a zone and start the kiosk, customers will only see services from that zone.
-            The kiosk will remember this setting until you reset it.
-          </p>
-        </div>
+       
       </div>
     </div>
   );

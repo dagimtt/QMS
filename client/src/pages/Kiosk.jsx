@@ -19,7 +19,7 @@ const Kiosk = () => {
   const [ticketGenerated, setTicketGenerated] = useState(null);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('service');
-  const [animationPhase, setAnimationPhase] = useState(0); // 0: English, 1: Amharic, 2: Subtext
+  const [animationPhase, setAnimationPhase] = useState(0);
 
   useEffect(() => {
     const zoneId = searchParams.get('zoneId');
@@ -38,7 +38,6 @@ const Kiosk = () => {
     }
   }, [searchParams]);
 
-  // Continuous animation loop
   useEffect(() => {
     const interval = setInterval(() => {
       setAnimationPhase((prev) => {
@@ -46,7 +45,7 @@ const Kiosk = () => {
         if (prev === 1) return 2;
         return 0;
       });
-    }, 4000); // Change every 4 seconds
+    }, 4000);
 
     return () => clearInterval(interval);
   }, []);
@@ -102,7 +101,111 @@ const Kiosk = () => {
   };
 
   const handlePrint = () => {
-    window.print();
+    const printContent = document.getElementById('printable-ticket');
+    const originalContents = document.body.innerHTML;
+    
+    // Create print-friendly HTML
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Ticket - ${ticketGenerated.displayNumber}</title>
+        <style>
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
+          body {
+            margin: 0;
+            padding: 5mm;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            width: 80mm;
+            background: white;
+          }
+          .ticket {
+            text-align: center;
+          }
+          .logo {
+            height: 30px;
+            margin-bottom: 10px;
+          }
+          .ticket-number {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #000;
+          }
+          .details {
+            width: 100%;
+            margin: 15px 0;
+          }
+          .details td {
+            padding: 4px 0;
+          }
+          .details td:last-child {
+            text-align: right;
+          }
+          .divider {
+            border-top: 1px dashed #000;
+            margin: 10px 0;
+          }
+          .footer {
+            font-size: 10px;
+            color: #666;
+            margin-top: 15px;
+          }
+          .barcode {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            letter-spacing: 2px;
+            margin-top: 10px;
+          }
+          .watermark {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            opacity: 0.1;
+            width: 50px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ticket">
+          <img src="${logoHorizontal}" class="logo" alt="ICS" />
+          
+          <div class="ticket-number">
+            #${ticketGenerated.displayNumber}
+          </div>
+          
+          <table class="details">
+            <tr><td>Full Number:</td><td><strong>${ticketGenerated.ticketNumber}</strong></td></tr>
+            <tr><td>Service:</td><td><strong>${ticketGenerated.service?.name}</strong></td></tr>
+            <tr><td>Date:</td><td><strong>${new Date(ticketGenerated.createdAt).toLocaleDateString()}</strong></td></tr>
+            <tr><td>Time:</td><td><strong>${new Date(ticketGenerated.createdAt).toLocaleTimeString()}</strong></td></tr>
+          </table>
+          
+          <div class="divider"></div>
+          
+          <div class="footer">
+            Please wait for your number to be called<br/>
+            Thank you for using our service
+          </div>
+          
+          <div class="barcode">
+            ${ticketGenerated.ticketNumber}
+          </div>
+        </div>
+        <script>
+          window.print();
+          window.onafterprint = function() { window.close(); };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const handleNewTicket = () => {
@@ -112,7 +215,6 @@ const Kiosk = () => {
     setCustomerInfo({ name: '', phone: '', email: '' });
   };
 
-  // Loading state
   if (!zone && !loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -128,7 +230,7 @@ const Kiosk = () => {
   if (step === 'ticket' && ticketGenerated) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 text-center relative overflow-hidden">
+        <div id="printable-ticket" className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 text-center relative overflow-hidden">
           <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
             <img src={logoWatermark} alt="ICS" className="w-64 h-64 object-contain" />
           </div>
@@ -136,11 +238,6 @@ const Kiosk = () => {
           <div className="relative z-10">
             <div className="flex justify-center mb-6">
               <img src={logoHorizontal} alt="ICS" className="h-12 object-contain" />
-            </div>
-            
-            <div className="mb-6">
-             
-              
             </div>
             
             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 mb-6">
@@ -156,10 +253,8 @@ const Kiosk = () => {
                   <span className="text-gray-600">Service:</span>
                   <span className="font-medium">{ticketGenerated.service?.name}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-gray-200">
-                  <span className="text-gray-600">Counter:</span>
-                  <span className="font-medium">{ticketGenerated.assignedCounter?.name || `Counter ${ticketGenerated.assignedCounter?.counterNumber}`}</span>
-                </div>
+               
+               
                 <div className="flex justify-between py-1">
                   <span className="text-gray-600">Time:</span>
                   <span className="font-medium">{new Date(ticketGenerated.createdAt).toLocaleTimeString()}</span>
@@ -197,7 +292,7 @@ const Kiosk = () => {
           </div>
           
           <div className="relative z-10">
-             <button
+            <button
               onClick={handleBackToServices}
               className="text-gray-500 hover:text-gray-700 mb-6 flex items-center text-sm"
             >
@@ -207,35 +302,30 @@ const Kiosk = () => {
               <img src={logoHorizontal} alt="ICS" className="h-10 object-contain" />
             </div>
             
-           
-            
             <div className="text-center mb-6">
-              
               <h1 className="text-2xl font-bold text-gray-900">{selectedService.name}</h1>
               <p className="text-gray-500 text-sm mt-1">Estimated time: {selectedService.estimatedTime} minutes</p>
             </div>
             
-            <form onSubmit={handleSubmit}>
-              
-              
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50"
-              >
-                {loading ? (
-                  <span className="flex items-center justify-center">
-                    <svg className="animate-spin h-5 w-5 mr-2 text-white" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Generating...
-                  </span>
-                ) : (
-                  'Get Ticket / ቲኬት ያግኙ'
-                )}
-              </button>
-            </form>
+            
+            
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center">
+                  <svg className="animate-spin h-5 w-5 mr-2 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Generating...
+                </span>
+              ) : (
+                'Get Ticket / ቲኬት ያግኙ'
+              )}
+            </button>
           </div>
         </div>
       </div>
@@ -245,36 +335,30 @@ const Kiosk = () => {
   // Service Selection Screen
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header with ICS Logo */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex flex-col items-center text-center">
             <img src={logoHorizontal} alt="ICS" className="h-16 object-contain mb-3" />
             
-            {/* Continuous Dual Language Typewriter Animation */}
             <div className="min-h-[120px]">
               <div className="typewriter-container">
                 {animationPhase === 0 && (
-                  <h1 key="english" className="typewriter-text animate-typewriter text-2xl md:text-3xl font-bold text-gray-900">
-                    Welcome to Ethiopia Immigration and Citizenship Service
+                  <h1 key="english" className="typewriter-text text-2xl md:text-3xl font-bold text-gray-900">
+                    Welcome to Immigration and Citizenship Service
                   </h1>
                 )}
                 
                 {animationPhase === 1 && (
-                  <h1 key="amharic" className="typewriter-text-amharic animate-typewriter-amharic text-2xl md:text-3xl font-bold text-gray-900">
+                  <h1 key="amharic" className="typewriter-text-amharic text-2xl md:text-3xl font-bold text-gray-900">
                     እንኳን ወደ ኢሚግሬሽንና እና ዜግነት አገልግሎት በደህና መጡ
                   </h1>
                 )}
-                
-               
               </div>
             </div>
-  
           </div>
         </div>
       </div>
       
-      {/* Service Selection - FULLY CENTERED */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="flex justify-center">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-6 justify-center items-stretch max-w-6xl w-full">
@@ -325,7 +409,6 @@ const Kiosk = () => {
         )}
       </div>
 
-      {/* Footer */}
       <div className="border-t border-gray-200 mt-12 py-6">
         <div className="max-w-7xl mx-auto px-6 text-center">
           <p className="text-gray-400 text-sm">Thank you for using our service | ለአገልግሎት እናመሰግናለን</p>

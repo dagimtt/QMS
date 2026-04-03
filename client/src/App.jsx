@@ -76,13 +76,13 @@ function App() {
                 <Route path="/kiosk" element={<Kiosk />} />
                 <Route path="/display/:zoneId" element={<PublicDisplay />} />
 
-                {/* ⚠️ Special dashboards */}
+                {/*  Special dashboards */}
                 <Route path="/counter/:counterId" element={<CounterDashboard />} />
 
-                {/* 🔐 Auth Protected Routes */}
+                {/*  Auth Protected Routes */}
                 <Route element={<ProtectedRoute />}>
 
-                  {/* 🧱 Layout Wrapper */}
+                  {/*  Layout Wrapper */}
                   <Route element={<Layout />}>
 
                     <Route path="/" element={<Navigate to="/dashboard" />} />

@@ -9,8 +9,8 @@ export const rolePermissions = {
     'mark_absent', 'escalate_tickets', 'view_counter_dashboard'
   ],
   'Supervisor': [
-    'view_dashboard', 'view_tickets', 'view_reports', 'manage_escalations',
-    'view_escalations', 'call_tickets', 'complete_tickets', 'mark_absent',
+    'view_dashboard', 'view_tickets', 'view_reports', 'view_escalations',
+    'manage_escalations', 'call_tickets', 'complete_tickets', 'mark_absent',
     'escalate_tickets', 'view_counter_dashboard'
   ],
   'Verifier': [
@@ -79,14 +79,7 @@ const userSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// Set permissions based on role before saving
-userSchema.pre('save', async function(next) {
-  // If permissions are not explicitly set, use role defaults
-  if (!this.permissions || this.permissions.length === 0) {
-    this.permissions = rolePermissions[this.role] || [];
-  }
-  next();
-});
+// NO pre-save middleware - we'll hash passwords in the controller
 
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {

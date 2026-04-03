@@ -97,9 +97,6 @@ const Layout = () => {
       nav.push({ name: 'Users', href: '/users', icon: UsersIcon });
     }
 
-    if (isAdmin && hasPermission(PERMISSIONS.MANAGE_USERS)) {
-      nav.push({ name: 'Permissions', href: '/permissions', icon: KeyIcon });
-    }
 
     if (isAdmin) {
       nav.push({ name: 'Role Permissions', href: '/role-permissions', icon: ShieldCheckIcon });
@@ -300,20 +297,7 @@ const Layout = () => {
             >
               <Bars3Icon className="h-5 w-5" />
             </button>
-            <div className="flex items-center space-x-3 ml-auto">
-              <div className="text-right">
-                <p className="text-xs font-medium text-gray-900">{user?.fullName}</p>
-                <p className="text-[10px] text-gray-500">{user?.role}</p>
-                {userCounter && (
-                  <p className="text-[9px] text-blue-600 mt-0.5">
-                    {userCounter.name || `Counter ${userCounter.counterNumber}`}
-                  </p>
-                )}
-              </div>
-              <div className="w-7 h-7 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-[11px]">
-                {user?.fullName?.charAt(0) || 'U'}
-              </div>
-            </div>
+            
           </div>
         </div>
         <main className="p-4">
