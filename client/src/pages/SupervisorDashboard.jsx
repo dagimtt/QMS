@@ -112,24 +112,32 @@ const SupervisorDashboard = () => {
   };
 
   const handleResolve = async (ticketId, action, resolution) => {
-    setActionLoading(true);
-    try {
-      const response = await api.post(`/tickets/${ticketId}/resolve-escalation`, {
-        resolution: resolution,
-        action: action
-      });
-      
-      if (response.data.success) {
-        toast.success(response.data.message);
-        fetchDashboard();
-      }
-    } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to resolve escalation');
-    } finally {
-      setActionLoading(false);
+  setActionLoading(true);
+  console.log('Resolving escalation:', { ticketId, action, resolution });
+  try {
+    const response = await api.post(`/tickets/${ticketId}/resolve-escalation`, {
+      resolution: resolution,
+      action: action
+    });
+    
+    console.log('Resolve response:', response.data);
+    
+    if (response.data.success) {
+      toast.success(response.data.message);
+      // Remove the ticket from the local state immediately
+      setEscalatedTickets(prev => prev.filter(t => t._id !== ticketId));
+      // Refresh dashboard to update stats
+      await fetchDashboard();
+    } else {
+      toast.error(response.data.message || 'Failed to resolve escalation');
     }
-  };
-
+  } catch (error) {
+    console.error('Resolve escalation error:', error);
+    toast.error(error.response?.data?.message || 'Failed to resolve escalation');
+  } finally {
+    setActionLoading(false);
+  }
+};
   const showResolveDialog = (ticket) => {
     const resolution = prompt(
       `Resolving escalation for ticket #${ticket.displayNumber}\n\n` +

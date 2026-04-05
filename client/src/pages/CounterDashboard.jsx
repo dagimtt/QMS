@@ -60,6 +60,32 @@ const CounterDashboard = () => {
         }
       });
       
+      socket.on('ticket-returned', (ticket) => {
+        if (ticket.assignedCounter === counterId) {
+          toast.info(`Ticket ${ticket.displayNumber} has been returned to your counter`, {
+            icon: '🔄',
+            style: { background: '#3B82F6', color: '#fff' }
+          });
+          fetchDashboardData();
+        }
+      });
+
+      socket.on('queue-updated', (data) => {
+        if (data.counterId === counterId) {
+          console.log('Queue updated:', data);
+          fetchDashboardData();
+          toast.info(`New ticket added to queue`, {
+            icon: '📋',
+            style: { background: '#3B82F6', color: '#fff' }
+          });
+        }
+      });
+      
+      socket.on('force-refresh', () => {
+        console.log('Force refresh received');
+        fetchDashboardData();
+      });
+      
       socket.on('ticket-completed', () => {
         fetchDashboardData();
         toast.success('Ticket completed successfully!', {
@@ -91,6 +117,9 @@ const CounterDashboard = () => {
         socket.off('ticket-completed');
         socket.off('ticket-absent');
         socket.off('audio-announcement');
+        socket.off('ticket-returned');
+        socket.off('queue-updated');
+        socket.off('force-refresh');
       };
     }
   }, [socket, counterId, audioEnabled]);
@@ -180,43 +209,57 @@ const CounterDashboard = () => {
     }
   };
 
-  const handleAbsent = async () => {
-    if (!currentTicket) return;
-    
-    if (window.confirm(`Mark ticket ${currentTicket.displayNumber} as absent? This will move to the next ticket.`)) {
-      setActionLoading(true);
-      try {
-        const response = await api.post(`/tickets/${currentTicket._id}/absent`);
-        if (response.data.success) {
-          toast.warning(`Ticket ${response.data.ticket.displayNumber} marked as absent`);
-          setCurrentTicket(null);
-          fetchDashboardData();
-        }
-      } catch (error) {
-        toast.error('Failed to mark ticket as absent');
-      } finally {
-        setActionLoading(false);
-      }
-    }
-  };
-
- const handleEscalate = async () => {
+ const handleAbsent = async () => {
   if (!currentTicket) return;
   
-  const reason = prompt('Please enter escalation reason:', 'Customer needs supervisor assistance');
-  if (reason && reason.trim()) {
+  if (window.confirm(`Mark ticket ${currentTicket.displayNumber} as absent? This customer will be marked as no-show.`)) {
     setActionLoading(true);
     try {
-      const response = await api.post(`/tickets/${currentTicket._id}/escalate`, { reason: reason.trim() });
+      console.log('Marking ticket as absent:', currentTicket._id);
+      const response = await api.post(`/tickets/${currentTicket._id}/absent`);
+      console.log('Absent response:', response.data);
+      
       if (response.data.success) {
-        toast.warning(`Ticket ${response.data.ticket.displayNumber} escalated. Reason: ${reason}`, {
-          icon: '🚨',
-          style: { background: '#EF4444', color: '#fff' }
+        toast.success(`Ticket ${response.data.ticket.displayNumber} marked as absent`, {
+          icon: '👋',
+          style: { background: '#F59E0B', color: '#fff' }
         });
-        // Clear current ticket immediately
         setCurrentTicket(null);
-        // Refresh dashboard data
         await fetchDashboardData();
+      } else {
+        toast.error(response.data.message || 'Failed to mark ticket as absent');
+      }
+    } catch (error) {
+      console.error('Absent error:', error);
+      toast.error(error.response?.data?.message || 'Failed to mark ticket as absent');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+};
+
+  const handleEscalate = async () => {
+    if (!currentTicket) return;
+    
+    const reason = prompt('Please enter escalation reason:', '');
+    
+    if (!reason || reason.trim() === '') {
+      toast.error('Escalation reason is required');
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const response = await api.post(`/tickets/${currentTicket._id}/escalate`, { 
+        reason: reason.trim() 
+      });
+      
+      if (response.data.success) {
+        toast.success(`Ticket ${response.data.ticket.displayNumber} escalated to Supervisor`);
+        setCurrentTicket(null);
+        await fetchDashboardData();
+      } else {
+        toast.error(response.data.message || 'Failed to escalate ticket');
       }
     } catch (error) {
       console.error('Escalate error:', error);
@@ -224,10 +267,8 @@ const CounterDashboard = () => {
     } finally {
       setActionLoading(false);
     }
-  } else if (reason !== null) {
-    toast.error('Escalation reason is required');
-  }
-};
+  };
+  
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -305,160 +346,203 @@ const CounterDashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Stats Cards */}
-        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">Total Today</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.total}</p>
+              </div>
+              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                <ChartBarIcon className="h-5 w-5 text-blue-500" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">Completed</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.completed}</p>
+              </div>
+              <div className="w-10 h-10 bg-green-50 rounded-xl flex items-center justify-center">
+                <CheckCircleIcon className="h-5 w-5 text-green-500" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">Waiting</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.waiting}</p>
+              </div>
+              <div className="w-10 h-10 bg-yellow-50 rounded-xl flex items-center justify-center">
+                <QueueListIcon className="h-5 w-5 text-yellow-500" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">Serving</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.serving}</p>
+              </div>
+              <div className="w-10 h-10 bg-purple-50 rounded-xl flex items-center justify-center">
+                <UserGroupIcon className="h-5 w-5 text-purple-500" />
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-  {/* Currently Serving Section */}
-  <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-3 border-b border-gray-100">
-      <h2 className="text-base font-medium text-gray-700 flex items-center">
-        <BellIcon className="h-4 w-4 mr-2 text-gray-500" />
-        Currently Serving
-      </h2>
-    </div>
-    <div className="p-6">
-      {currentTicket ? (
-        <div className="text-center">
-          <div className="relative">
-            <div className="absolute inset-0 bg-blue-100 rounded-full opacity-30 animate-pulse"></div>
-            <div className="text-6xl font-bold text-blue-500 mb-3 relative">
-              {currentTicket.displayNumber}
+          {/* Currently Serving Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-3 border-b border-gray-100">
+              <h2 className="text-base font-medium text-gray-700 flex items-center">
+                <BellIcon className="h-4 w-4 mr-2 text-gray-500" />
+                Currently Serving
+              </h2>
+            </div>
+            <div className="p-6">
+              {currentTicket ? (
+                <div className="text-center">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-blue-100 rounded-full opacity-30 animate-pulse"></div>
+                    <div className="text-6xl font-bold text-blue-500 mb-3 relative">
+                      {currentTicket.displayNumber}
+                    </div>
+                  </div>
+                  {showTimer && (
+                    <div className="inline-flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-full mb-5">
+                      <ClockIcon className="h-3.5 w-3.5 text-gray-500" />
+                      <span className="text-xs font-medium text-gray-600">
+                        Serving: {formatTime(secondsElapsed)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="space-y-2 mb-6 bg-gray-50/50 rounded-lg p-4">
+                    <div className="flex items-center justify-center space-x-2">
+                      <span className="text-xs text-gray-500">Service:</span>
+                      <span className="text-sm font-medium text-gray-800">{currentTicket.service?.name}</span>
+                    </div>
+                    {currentTicket.customerInfo?.phone && (
+                      <div className="flex items-center justify-center space-x-2">
+                        <PhoneIcon className="h-4 w-4 text-gray-400" />
+                        <span className="text-xs text-gray-500">Phone:</span>
+                        <span className="text-sm font-medium text-gray-800">{currentTicket.customerInfo.phone}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={handleComplete}
+                      disabled={actionLoading}
+                      className="bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-green-200"
+                    >
+                      <CheckCircleIcon className="h-4 w-4 mr-1.5" />
+                      Complete
+                    </button>
+                    <button
+                      onClick={handleAbsent}
+                      disabled={actionLoading}
+                      className="bg-gray-50 hover:bg-gray-100 text-gray-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-gray-200"
+                    >
+                      <XCircleIcon className="h-4 w-4 mr-1.5" />
+                      Absent
+                    </button>
+                    <button
+                      onClick={handleEscalate}
+                      disabled={actionLoading}
+                      className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-red-200"
+                    >
+                      <ExclamationTriangleIcon className="h-4 w-4 mr-1.5" />
+                      Escalate
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <UserIcon className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 text-sm">No ticket being served</p>
+                  <p className="text-gray-400 text-xs mt-1">Click "Call Next" to serve</p>
+                </div>
+              )}
             </div>
           </div>
-          {showTimer && (
-            <div className="inline-flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-full mb-5">
-              <ClockIcon className="h-3.5 w-3.5 text-gray-500" />
-              <span className="text-xs font-medium text-gray-600">
-                Serving: {formatTime(secondsElapsed)}
-              </span>
-            </div>
-          )}
-          <div className="space-y-2 mb-6 bg-gray-50/50 rounded-lg p-4">
-            <div className="flex items-center justify-center space-x-2">
-              <span className="text-xs text-gray-500">Service:</span>
-              <span className="text-sm font-medium text-gray-800">{currentTicket.service?.name}</span>
-            </div>
-            
-            {currentTicket.customerInfo?.phone && (
-              <div className="flex items-center justify-center space-x-2">
-                <PhoneIcon className="h-4 w-4 text-gray-400" />
-                <span className="text-xs text-gray-500">Phone:</span>
-                <span className="text-sm font-medium text-gray-800">{currentTicket.customerInfo.phone}</span>
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <button
-              onClick={handleComplete}
-              disabled={actionLoading}
-              className="bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-green-200"
-            >
-              <CheckCircleIcon className="h-4 w-4 mr-1.5" />
-              Complete
-            </button>
-            <button
-              onClick={handleAbsent}
-              disabled={actionLoading}
-              className="bg-gray-50 hover:bg-gray-100 text-gray-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-gray-200"
-            >
-              <XCircleIcon className="h-4 w-4 mr-1.5" />
-              Absent
-            </button>
-            <button
-              onClick={handleEscalate}
-              disabled={actionLoading}
-              className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 font-medium text-sm flex items-center justify-center border border-red-200"
-            >
-              <ExclamationTriangleIcon className="h-4 w-4 mr-1.5" />
-              Escalate
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="text-center py-10">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-            <UserIcon className="h-8 w-8 text-gray-400" />
-          </div>
-          <p className="text-gray-500 text-sm">No ticket being served</p>
-          <p className="text-gray-400 text-xs mt-1">Click "Call Next" to serve</p>
-        </div>
-      )}
-    </div>
-  </div>
 
-  {/* Queue Section */}
-  <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-    <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-5 py-3 border-b border-gray-100 flex justify-between items-center">
-      <div>
-        <h2 className="text-base font-medium text-gray-700 flex items-center">
-          <QueueListIcon className="h-4 w-4 mr-2 text-gray-500" />
-          Next in Queue
-        </h2>
-        <p className="text-xs text-gray-400 mt-0.5">{waitingTickets.length} customer(s) waiting</p>
-      </div>
-      <button
-        onClick={handleCallNext}
-        disabled={actionLoading || waitingTickets.length === 0}
-        className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-1.5 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center border border-blue-200"
-      >
-        <ArrowRightIcon className="h-3.5 w-3.5 mr-1.5" />
-        Call Next
-      </button>
-    </div>
-    <div className="p-5">
-      {waitingTickets.length === 0 ? (
-        <div className="text-center py-10">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-            <QueueListIcon className="h-8 w-8 text-gray-400" />
-          </div>
-          <p className="text-gray-500 text-sm">No customers waiting</p>
-          <p className="text-gray-400 text-xs mt-1">Queue is empty</p>
-        </div>
-      ) : (
-        <div className="space-y-2 max-h-80 overflow-y-auto">
-          {waitingTickets.map((ticket, index) => (
-            <div
-              key={ticket._id}
-              className={`flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${
-                index === 0 
-                  ? 'bg-blue-50/50 border-l-3 border-l-blue-400' 
-                  : 'bg-gray-50/50 hover:bg-gray-100'
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <div className={`text-2xl font-bold ${index === 0 ? 'text-blue-600' : 'text-gray-700'}`}>
-                  {ticket.displayNumber}
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-gray-800">
-                    {ticket.service?.name}
-                  </div>
-                  <div className="flex items-center space-x-2 mt-0.5">
-                    <ClockIcon className="h-3 w-3 text-gray-400" />
-                    <span className="text-xs text-gray-500">
-                      Waiting: {ticket.waitingTime} min
-                    </span>
-                  </div>
-                
-                </div>
+          {/* Queue Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-5 py-3 border-b border-gray-100 flex justify-between items-center">
+              <div>
+                <h2 className="text-base font-medium text-gray-700 flex items-center">
+                  <QueueListIcon className="h-4 w-4 mr-2 text-gray-500" />
+                  Next in Queue
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">{waitingTickets.length} customer(s) waiting</p>
               </div>
-              <div className="flex items-center space-x-2">
-                {ticket.isPriority && (
-                  <span className="px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full font-medium">
-                    Priority
-                  </span>
-                )}
-                <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${getStatusBadge(ticket.status)}`}>
-                  {ticket.status}
-                </span>
-              </div>
+              <button
+                onClick={handleCallNext}
+                disabled={actionLoading || waitingTickets.length === 0}
+                className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-1.5 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center border border-blue-200"
+              >
+                <ArrowRightIcon className="h-3.5 w-3.5 mr-1.5" />
+                Call Next
+              </button>
             </div>
-          ))}
+            <div className="p-5">
+              {waitingTickets.length === 0 ? (
+                <div className="text-center py-10">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <QueueListIcon className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 text-sm">No customers waiting</p>
+                  <p className="text-gray-400 text-xs mt-1">Queue is empty</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {waitingTickets.map((ticket, index) => (
+                    <div
+                      key={ticket._id}
+                      className={`flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${
+                        index === 0 
+                          ? 'bg-blue-50/50 border-l-3 border-l-blue-400' 
+                          : 'bg-gray-50/50 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className={`text-2xl font-bold ${index === 0 ? 'text-blue-600' : 'text-gray-700'}`}>
+                          {ticket.displayNumber}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-800">
+                            {ticket.service?.name}
+                          </div>
+                          <div className="flex items-center space-x-2 mt-0.5">
+                            <ClockIcon className="h-3 w-3 text-gray-400" />
+                            <span className="text-xs text-gray-500">
+                              Waiting: {ticket.waitingTime} min
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {ticket.isPriority && (
+                          <span className="px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full font-medium">
+                            Priority
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${getStatusBadge(ticket.status)}`}>
+                          {ticket.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      )}
-    </div>
-  </div>
-</div>
 
         {/* Queue Status Bar */}
         {waitingTickets.length > 0 && (

@@ -108,7 +108,7 @@ export const createTicket = async (req, res) => {
   }
 };
 
-// Call next ticket - GET FROM SHARED QUEUE
+// Call next ticket - First check assigned tickets, then shared queue
 export const callNextTicket = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -129,13 +129,26 @@ export const callNextTicket = async (req, res) => {
     else if (counter.type === 'Authorizer') currentStep = 'Authorization';
     else currentStep = 'Verification';
     
-    const nextTicket = await Ticket.findOne({
-      zone: zone._id,
-      assignedTo: counter.type,
-      status: 'Waiting',
-      currentStep: currentStep,
-      assignedCounter: null
+    // FIRST: Check for tickets already assigned to this counter (returned tickets)
+    let nextTicket = await Ticket.findOne({
+      assignedCounter: counterId,
+      status: { $in: ['Waiting', 'Priority'] },
+      $or: [
+        { calledAt: { $exists: false } },
+        { calledAt: null }
+      ]
     }).sort({ isPriority: -1, createdAt: 1 });
+    
+    // SECOND: If no assigned tickets, get from shared queue
+    if (!nextTicket) {
+      nextTicket = await Ticket.findOne({
+        zone: zone._id,
+        assignedTo: counter.type,
+        status: 'Waiting',
+        currentStep: currentStep,
+        assignedCounter: null
+      }).sort({ isPriority: -1, createdAt: 1 });
+    }
     
     if (!nextTicket) {
       return res.status(404).json({ success: false, message: 'No tickets waiting in queue' });
@@ -143,6 +156,7 @@ export const callNextTicket = async (req, res) => {
     
     console.log(`Found ticket: ${nextTicket.ticketNumber}, assigning to counter ${counter.counterNumber}`);
     
+    // Assign this ticket to the calling counter
     nextTicket.assignedCounter = counter._id;
     nextTicket.status = 'Serving';
     nextTicket.calledAt = new Date();
@@ -297,32 +311,70 @@ export const markTicketAbsent = async (req, res) => {
   try {
     const { ticketId } = req.params;
     
+    console.log('Mark ticket absent request:', { ticketId });
+    
     const ticket = await Ticket.findById(ticketId);
     if (!ticket) {
       return res.status(404).json({ success: false, message: 'Ticket not found' });
     }
     
+    console.log('Current ticket status:', ticket.status);
+    
+    // Allow marking as absent for Serving or Called tickets
     if (ticket.status !== 'Serving') {
-      return res.status(400).json({ success: false, message: 'Ticket is not being served' });
+      // Also allow if the ticket has been called but not yet serving
+      if (ticket.calledAt && ticket.status === 'Waiting') {
+        console.log('Ticket has been called but not serving, marking as absent');
+      } else {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Only tickets that are currently being served can be marked as absent' 
+        });
+      }
     }
     
     const zone = await Zone.findById(ticket.zone);
+    const counter = await Counter.findById(ticket.assignedCounter);
     
+    // Update ticket status
     ticket.status = 'No-Show';
     ticket.assignedCounter = null;
+    ticket.calledAt = null;
+    ticket.lastCalledAt = null;
+    
     ticket.auditLog.push({
       action: 'Ticket Marked Absent',
       user: req.user._id,
       userRole: req.user.role,
-      details: { zone: zone?.name }
+      timestamp: new Date(),
+      details: { 
+        zone: zone?.name,
+        counter: counter?.counterNumber
+      }
     });
     
     await ticket.save();
+    console.log('Ticket marked as absent:', ticket.ticketNumber);
     
-    await Counter.updateMany(
-      { currentTicket: ticketId },
-      { $unset: { currentTicket: "" }, status: 'Available' }
-    );
+    // Clear counter's current ticket and set status to Available
+    if (counter) {
+      counter.currentTicket = null;
+      counter.status = 'Available';
+      
+      // Also remove from queue if present
+      if (counter.queue) {
+        counter.queue = counter.queue.filter(id => id.toString() !== ticketId);
+      }
+      await counter.save();
+      console.log(`Counter ${counter.counterNumber} status updated to Available`);
+    }
+    
+    // Emit socket event for real-time update
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`counter-${counter?._id}`).emit('ticket-absent', { ticketId });
+      io.to(`zone-${ticket.zone}`).emit('queue-updated');
+    }
     
     const formattedTicket = {
       ...ticket.toObject(),
@@ -337,10 +389,9 @@ export const markTicketAbsent = async (req, res) => {
     });
   } catch (error) {
     console.error('Mark ticket absent error:', error);
-    res.status(500).json({ success: false, message: 'Failed to mark ticket as absent' });
+    res.status(500).json({ success: false, message: 'Failed to mark ticket as absent', error: error.message });
   }
 };
-
 export const escalateTicket = async (req, res) => {
   try {
     const { ticketId } = req.params;
@@ -348,11 +399,10 @@ export const escalateTicket = async (req, res) => {
     
     console.log('Escalate request:', { ticketId, reason });
     
-    // Validate reason is provided
     if (!reason || reason.trim() === '') {
       return res.status(400).json({ 
         success: false, 
-        message: 'Escalation reason is required. Please provide a reason.' 
+        message: 'Escalation reason is required.' 
       });
     }
     
@@ -361,7 +411,6 @@ export const escalateTicket = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Ticket not found' });
     }
     
-    // Check if ticket is already escalated
     if (ticket.status === 'Escalated') {
       return res.status(400).json({ 
         success: false, 
@@ -369,7 +418,6 @@ export const escalateTicket = async (req, res) => {
       });
     }
     
-    // Check if ticket is being served
     if (ticket.status !== 'Serving') {
       return res.status(400).json({ 
         success: false, 
@@ -380,31 +428,29 @@ export const escalateTicket = async (req, res) => {
     const zone = await Zone.findById(ticket.zone);
     const counter = await Counter.findById(ticket.assignedCounter);
     
-    // Get the original verifier/user
     let originalUser = null;
     if (counter && counter.assignedUser) {
       originalUser = await User.findById(counter.assignedUser);
     }
     
-    // Initialize escalationDetails if not exists
-    if (!ticket.escalationDetails) {
-      ticket.escalationDetails = {};
-    }
+    // Store the counter ID before clearing
+    const originalCounterId = ticket.assignedCounter;
+    const originalCounterNumber = counter?.counterNumber;
     
     // Update ticket for escalation
     ticket.status = 'Escalated';
-    ticket.escalationDetails.reason = reason.trim();
-    ticket.escalationDetails.escalatedBy = req.user._id;
-    ticket.escalationDetails.escalatedAt = new Date();
-    ticket.escalationDetails.originalCounter = ticket.assignedCounter;
-    ticket.escalationDetails.originalVerifier = counter?.assignedUser || null;
-    ticket.escalationDetails.action = 'pending';
-    ticket.escalationDetails.resolution = '';
-    ticket.escalationDetails.priorityReason = '';
-    ticket.assignedCounter = null; // Release from current counter
+    ticket.escalationDetails = {
+      reason: reason.trim(),
+      escalatedBy: req.user._id,
+      escalatedAt: new Date(),
+      originalCounter: originalCounterId,
+      originalVerifier: counter?.assignedUser || null,
+      action: 'pending',
+      resolution: '',
+      priorityReason: ''
+    };
+    ticket.assignedCounter = null;
     
-    // Add audit log
-    if (!ticket.auditLog) ticket.auditLog = [];
     ticket.auditLog.push({
       action: 'Ticket Escalated',
       user: req.user._id,
@@ -413,14 +459,14 @@ export const escalateTicket = async (req, res) => {
       details: { 
         reason: reason.trim(),
         zone: zone?.name,
-        originalCounter: counter?.counterNumber,
+        originalCounter: originalCounterNumber,
         originalVerifier: originalUser?.fullName
       }
     });
     
     await ticket.save();
     
-    // Clear counter's current ticket
+    // Clear counter's current ticket and set to Available
     if (counter) {
       counter.currentTicket = null;
       counter.status = 'Available';
@@ -434,16 +480,22 @@ export const escalateTicket = async (req, res) => {
       escalationReason: reason.trim(),
       escalatedBy: req.user.fullName,
       escalatedAt: ticket.escalationDetails.escalatedAt,
-      originalCounterNumber: counter?.counterNumber,
+      originalCounterNumber: originalCounterNumber,
       originalVerifierName: originalUser?.fullName
     };
     
     console.log('Ticket escalated successfully:', formattedTicket.displayNumber);
     
+    // Emit socket event for real-time update
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`zone-${ticket.zone}`).emit('ticket-escalated', formattedTicket);
+    }
+    
     res.json({
       success: true,
       ticket: formattedTicket,
-      message: `Ticket ${formattedTicket.displayNumber} escalated to Supervisor. Reason: ${reason}`
+      message: `Ticket ${formattedTicket.displayNumber} escalated to Supervisor.`
     });
   } catch (error) {
     console.error('Escalate ticket error:', error);
@@ -492,7 +544,9 @@ export const getEscalatedTickets = async (req, res) => {
 export const resolveEscalation = async (req, res) => {
   try {
     const { ticketId } = req.params;
-    const { resolution, action } = req.body; // action: 'resolved', 'return', 'priority_return'
+    const { resolution, action } = req.body;
+    
+    console.log('Resolve escalation request:', { ticketId, resolution, action });
     
     const ticket = await Ticket.findById(ticketId);
     if (!ticket) {
@@ -505,139 +559,123 @@ export const resolveEscalation = async (req, res) => {
     
     const zone = await Zone.findById(ticket.zone);
     
-    if (action === 'priority_return') {
-      // Return to original verifier with PRIORITY status
+    // Handle return to original counter (with or without priority)
+    if (action === 'return' || action === 'priority_return') {
       const originalCounter = await Counter.findById(ticket.escalationDetails.originalCounter);
       
       if (!originalCounter) {
         return res.status(404).json({ success: false, message: 'Original counter not found' });
       }
       
-      // Check if original counter is available
-      if (originalCounter.status !== 'Available') {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Original counter is busy. Please wait or choose another option.' 
-        });
+      const isPriority = action === 'priority_return';
+      
+      console.log(`Returning ticket to counter ${originalCounter.counterNumber}, Priority: ${isPriority}, Counter Status: ${originalCounter.status}`);
+      
+      // Update ticket status
+      if (isPriority) {
+        ticket.status = 'Priority';
+        ticket.isPriority = true;
+        ticket.priorityReason = 'Priority Return';
+      } else {
+        ticket.status = 'Waiting';
+        ticket.isPriority = false;
+        ticket.priorityReason = '';
       }
       
-      // Return ticket to original counter with PRIORITY
-      ticket.status = 'Priority';
-      ticket.isPriority = true;
-      ticket.priorityReason = 'Escalation Resolved - Priority Return';
       ticket.currentStep = ticket.currentStep;
-      ticket.assignedTo = ticket.escalationDetails.originalCounter ? 
-        (ticket.escalationDetails.originalCounter.type === 'Verifier' ? 'Verifier' :
-         ticket.escalationDetails.originalCounter.type === 'Validator' ? 'Validator' : 'Authorizer') : 'Verifier';
-      ticket.assignedCounter = ticket.escalationDetails.originalCounter;
-      ticket.escalationDetails.action = 'priority_return';
+      ticket.assignedTo = originalCounter.type === 'Verifier' ? 'Verifier' :
+                         originalCounter.type === 'Validator' ? 'Validator' : 'Authorizer';
+      ticket.assignedCounter = originalCounter._id;
+      
+      // CRITICAL: Clear calledAt so it appears as a waiting ticket
+      ticket.calledAt = null;
+      ticket.lastCalledAt = null;
+      
+      ticket.escalationDetails.action = isPriority ? 'priority_return' : 'returned';
       ticket.escalationDetails.resolvedBy = req.user._id;
       ticket.escalationDetails.resolvedAt = new Date();
-      ticket.escalationDetails.resolution = resolution || 'Returned to original counter with priority';
-      ticket.escalationDetails.priorityReason = 'Resolved escalation - priority handling';
+      ticket.escalationDetails.resolution = resolution || (isPriority ? 'Returned with priority' : 'Returned to original counter');
       
       ticket.auditLog.push({
-        action: 'Escalation Resolved - Priority Return',
+        action: isPriority ? 'Escalation Resolved - Priority Return' : 'Escalation Resolved - Returned',
         user: req.user._id,
         userRole: req.user.role,
         timestamp: new Date(),
         details: { 
-          resolution: resolution || 'Returned to original counter with priority',
-          returnedTo: ticket.escalationDetails.originalCounter?.counterNumber,
+          resolution: resolution || (isPriority ? 'Returned with priority' : 'Returned to original counter'),
+          returnedTo: originalCounter.counterNumber,
           zone: zone.name,
-          priority: true
+          priority: isPriority,
+          counterStatus: originalCounter.status
         }
       });
       
       await ticket.save();
       
-      // Add to original counter's queue at the beginning (priority)
+      // Add to counter's queue
       originalCounter.queue = originalCounter.queue || [];
-      originalCounter.queue.unshift(ticket._id); // Add to front of queue
+      if (isPriority) {
+        originalCounter.queue.unshift(ticket._id);
+        console.log(`Priority ticket added to FRONT of queue for counter ${originalCounter.counterNumber}`);
+      } else {
+        originalCounter.queue.push(ticket._id);
+        console.log(`Normal ticket added to BACK of queue for counter ${originalCounter.counterNumber}`);
+      }
+      
+      // If counter is available, set as current ticket
+      if (originalCounter.status === 'Available') {
+        originalCounter.currentTicket = ticket._id;
+        originalCounter.status = 'Busy';
+        console.log(`Counter ${originalCounter.counterNumber} is available, ticket set as current`);
+      } else {
+        console.log(`Counter ${originalCounter.counterNumber} is BUSY, ticket added to queue (position: ${originalCounter.queue.length})`);
+        // Make sure current ticket is not overwritten
+        originalCounter.currentTicket = originalCounter.currentTicket;
+      }
+      
       await originalCounter.save();
+      
+      // Emit socket events for real-time updates
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`counter-${originalCounter._id}`).emit('force-refresh');
+        io.to(`counter-${originalCounter._id}`).emit('queue-updated', {
+          counterId: originalCounter._id,
+          queueLength: originalCounter.queue.length,
+          ticket: {
+            ...ticket.toObject(),
+            displayNumber: ticket.ticketNumber.slice(-4)
+          }
+        });
+      }
       
       const formattedTicket = {
         ...ticket.toObject(),
         number: ticket.ticketNumber.slice(-4),
         displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
-        isPriority: true
+        isPriority: isPriority,
+        queuePosition: originalCounter.queue.length
       };
       
       return res.json({
         success: true,
         ticket: formattedTicket,
-        message: `Ticket ${formattedTicket.displayNumber} returned to Counter ${originalCounter.counterNumber} with PRIORITY status`
+        message: `Ticket ${formattedTicket.displayNumber} ${isPriority ? 'returned with PRIORITY' : 'returned'} to Counter ${originalCounter.counterNumber}${originalCounter.status !== 'Available' ? ' (added to queue)' : ''}`
       });
-      
-    } else if (action === 'return') {
-      // Return to original verifier (normal priority)
-      const originalCounter = await Counter.findById(ticket.escalationDetails.originalCounter);
-      
-      if (!originalCounter) {
-        return res.status(404).json({ success: false, message: 'Original counter not found' });
-      }
-      
-      // Check if original counter is available
-      if (originalCounter.status !== 'Available') {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Original counter is busy. Please wait or choose another option.' 
-        });
-      }
-      
-      // Return ticket to original counter
+    }
+    
+    // Handle resolve to shared queue
+    else {
       ticket.status = 'Waiting';
       ticket.isPriority = false;
+      ticket.priorityReason = '';
       ticket.currentStep = ticket.currentStep;
       ticket.assignedTo = ticket.escalationDetails.originalCounter ? 
         (ticket.escalationDetails.originalCounter.type === 'Verifier' ? 'Verifier' :
          ticket.escalationDetails.originalCounter.type === 'Validator' ? 'Validator' : 'Authorizer') : 'Verifier';
-      ticket.assignedCounter = ticket.escalationDetails.originalCounter;
-      ticket.escalationDetails.action = 'returned';
-      ticket.escalationDetails.resolvedBy = req.user._id;
-      ticket.escalationDetails.resolvedAt = new Date();
-      ticket.escalationDetails.resolution = resolution || 'Returned to original counter';
-      
-      ticket.auditLog.push({
-        action: 'Escalation Resolved - Returned',
-        user: req.user._id,
-        userRole: req.user.role,
-        timestamp: new Date(),
-        details: { 
-          resolution: resolution || 'Returned to original counter',
-          returnedTo: ticket.escalationDetails.originalCounter?.counterNumber,
-          zone: zone.name
-        }
-      });
-      
-      await ticket.save();
-      
-      // Add to original counter's queue
-      originalCounter.queue = originalCounter.queue || [];
-      originalCounter.queue.push(ticket._id);
-      await originalCounter.save();
-      
-      const formattedTicket = {
-        ...ticket.toObject(),
-        number: ticket.ticketNumber.slice(-4),
-        displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString()
-      };
-      
-      return res.json({
-        success: true,
-        ticket: formattedTicket,
-        message: `Ticket ${formattedTicket.displayNumber} returned to Counter ${originalCounter.counterNumber}`
-      });
-      
-    } else {
-      // Resolve the escalation (issue fixed - send to shared queue)
-      ticket.status = 'Waiting';
-      ticket.isPriority = false;
-      ticket.currentStep = ticket.currentStep;
-      ticket.assignedTo = ticket.escalationDetails.originalCounter ? 
-        (ticket.escalationDetails.originalCounter.type === 'Verifier' ? 'Verifier' :
-         ticket.escalationDetails.originalCounter.type === 'Validator' ? 'Validator' : 'Authorizer') : 'Verifier';
-      ticket.assignedCounter = null; // Put back in shared queue
+      ticket.assignedCounter = null;
+      ticket.calledAt = null;
+      ticket.lastCalledAt = null;
       ticket.escalationDetails.action = 'resolved';
       ticket.escalationDetails.resolvedBy = req.user._id;
       ticket.escalationDetails.resolvedAt = new Date();
@@ -690,7 +728,7 @@ export const getSupervisorDashboard = async (req, res) => {
     const escalatedTickets = await Ticket.find({
       zone: zoneId,
       status: 'Escalated'
-    })
+         })
     .populate('service', 'name code')
     .populate('escalationDetails.escalatedBy', 'fullName email role')
     .populate('escalationDetails.originalVerifier', 'fullName email role')
@@ -750,7 +788,7 @@ export const getSupervisorDashboard = async (req, res) => {
   }
 };
 
-// Get counter dashboard
+// Get counter dashboard - Shows both assigned tickets and shared queue tickets
 export const getCounterDashboard = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -768,6 +806,7 @@ export const getCounterDashboard = async (req, res) => {
     
     const zone = counter.group?.zone;
     
+    // Get current ticket being served
     let currentTicket = null;
     if (counter.currentTicket) {
       currentTicket = await Ticket.findById(counter.currentTicket)
@@ -775,25 +814,47 @@ export const getCounterDashboard = async (req, res) => {
         .populate('customerInfo');
     }
     
-    const waitingTickets = await Ticket.find({
-      zone: zone?._id,
-      assignedTo: counter.type,
-      status: 'Waiting',
-      currentStep: counter.type === 'Verifier' ? 'Verification' : 
-                    counter.type === 'Validator' ? 'Validation' : 'Authorization',
-      assignedCounter: null
+    // Get tickets ALREADY ASSIGNED to this counter (returned tickets, etc.)
+    const assignedTickets = await Ticket.find({
+      assignedCounter: counterId,
+      status: { $in: ['Waiting', 'Priority'] },
+      $or: [
+        { calledAt: { $exists: false } },
+        { calledAt: null }
+      ]
     })
     .populate('service', 'name code')
     .populate('customerInfo')
-    .sort({ isPriority: -1, createdAt: 1 })
-    .limit(20);
+    .sort({ isPriority: -1, createdAt: 1 });
     
-    const formattedWaiting = waitingTickets.map((ticket, index) => ({
+    // Get UNAssigned tickets from shared queue that this counter can call
+    let currentStep;
+    if (counter.type === 'Verifier') currentStep = 'Verification';
+    else if (counter.type === 'Validator') currentStep = 'Validation';
+    else if (counter.type === 'Authorizer') currentStep = 'Authorization';
+    else currentStep = 'Verification';
+    
+    const unassignedTickets = await Ticket.find({
+      zone: zone?._id,
+      assignedTo: counter.type,
+      status: 'Waiting',
+      currentStep: currentStep,
+      assignedCounter: null  // Not assigned to any counter yet
+    })
+    .populate('service', 'name code')
+    .populate('customerInfo')
+    .sort({ isPriority: -1, createdAt: 1 });
+    
+    // Combine both lists: assigned tickets first (priority), then unassigned
+    const allWaitingTickets = [...assignedTickets, ...unassignedTickets];
+    
+    const formattedWaiting = allWaitingTickets.map((ticket, index) => ({
       ...ticket.toObject(),
       number: ticket.ticketNumber.slice(-4),
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
       waitingTime: Math.floor((new Date() - new Date(ticket.createdAt)) / 60000),
-      queuePosition: index + 1
+      queuePosition: index + 1,
+      isAssigned: ticket.assignedCounter !== null  // Mark if already assigned to this counter
     }));
     
     let formattedCurrent = null;
@@ -834,15 +895,18 @@ export const getCounterDashboard = async (req, res) => {
       },
       currentTicket: formattedCurrent,
       waitingTickets: formattedWaiting,
-      queueLength: waitingTickets.length,
+      assignedCount: assignedTickets.length,
+      unassignedCount: unassignedTickets.length,
+      queueLength: allWaitingTickets.length,
       stats: stats[0] || { total: 0, completed: 0, waiting: 0, serving: 0, noShow: 0 },
       timestamp: new Date()
     });
   } catch (error) {
     console.error('Get counter dashboard error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get counter dashboard' });
+    res.status(500).json({ success: false, message: 'Failed to get counter dashboard', error: error.message });
   }
 };
+
 
 // Get all tickets
 export const getTickets = async (req, res) => {

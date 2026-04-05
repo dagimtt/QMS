@@ -61,7 +61,8 @@ const ticketSchema = new mongoose.Schema({
   serviceTime: { type: Number, default: 0 },
   totalTime: { type: Number, default: 0 },
   isPriority: { type: Boolean, default: false },
-  priorityReason: { type: String, enum: ['VIP', 'Elderly', 'Disabled', 'Emergency', 'Rejoin', 'None'], default: 'None' },
+  // FIXED: Removed enum restriction
+  priorityReason: { type: String, default: '' },
   
   // Escalation Details
   escalationDetails: {

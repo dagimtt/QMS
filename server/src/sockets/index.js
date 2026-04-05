@@ -57,6 +57,12 @@ export const initializeSocket = (io) => {
         console.error('Socket complete-ticket error:', error);
       }
     });
+
+
+
+    socket.on('escalation-resolved', (data) => {
+  io.to(`counter-${data.counterId}`).emit('ticket-returned', data.ticket);
+});
     
     socket.on('absent-ticket', async (data) => {
       try {
