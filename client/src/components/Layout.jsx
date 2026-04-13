@@ -26,86 +26,182 @@ const Layout = () => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userCounter, setUserCounter] = useState(null);
-  const [availableZones, setAvailableZones] = useState([]);
+  const [supervisorZoneId, setSupervisorZoneId] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [loadingZone, setLoadingZone] = useState(true);
+  const [redirected, setRedirected] = useState(false);
 
+  // Fetch user's counter (for officers)
   useEffect(() => {
-    if (user?.counter) {
+    if (user?.counter && isOfficer) {
       fetchUserCounter();
     }
-    if (isSupervisor || isAdmin) {
-      fetchZones();
-    }
-  }, [user]);
+  }, [user, isOfficer]);
+
+  // Fetch supervisor's zone from their counter
+  useEffect(() => {
+    const fetchSupervisorZone = async () => {
+      if (isSupervisor && user?.counter && !redirected) {
+        setLoadingZone(true);
+        console.log('=== Fetching Supervisor Zone for:', user.email);
+        
+        try {
+          // Get counter ID properly
+          let counterId = user.counter;
+          if (typeof counterId === 'object' && counterId !== null) {
+            counterId = counterId._id || counterId.toString();
+          }
+          
+          console.log('Counter ID:', counterId);
+          
+          // Fetch counter with populated group
+          const counterResponse = await api.get(`/counters/${counterId}`);
+          const counter = counterResponse.data.counter;
+          console.log('Counter:', { 
+            id: counter._id, 
+            number: counter.counterNumber, 
+            name: counter.name,
+            type: counter.type,
+            group: counter.group 
+          });
+          
+          let zoneId = null;
+          
+          // Check if group is populated with zone
+          if (counter.group && typeof counter.group === 'object' && counter.group.zone) {
+            // Group is populated, get zone from it
+            if (typeof counter.group.zone === 'object' && counter.group.zone._id) {
+              zoneId = counter.group.zone._id;
+              console.log('Zone ID from populated group:', zoneId);
+              console.log('Zone name:', counter.group.zone.name);
+            } else {
+              zoneId = counter.group.zone;
+            }
+          } 
+          // If group is just an ID, fetch it
+          else if (counter.group && typeof counter.group === 'string') {
+            const groupResponse = await api.get(`/groups/${counter.group}`);
+            const group = groupResponse.data.group;
+            console.log('Group fetched:', { id: group._id, name: group.name, zone: group.zone });
+            
+            if (group && group.zone) {
+              if (typeof group.zone === 'object' && group.zone._id) {
+                zoneId = group.zone._id;
+              } else {
+                zoneId = group.zone;
+              }
+            }
+          }
+          
+          if (zoneId) {
+            // Fetch zone details
+            const zoneResponse = await api.get(`/zones/${zoneId}`);
+            const zone = zoneResponse.data.zone;
+            console.log('Zone found:', { id: zone._id, name: zone.name, code: zone.code });
+            
+            if (zone && zone._id) {
+              setSupervisorZoneId(zone._id);
+              console.log('✅ Supervisor zone set to:', zone._id, zone.name);
+              
+              // Redirect to the correct zone if needed
+              const targetUrl = `/supervisor/${zone._id}`;
+              const currentPath = location.pathname;
+              
+              if (!currentPath.includes('/supervisor/')) {
+                console.log('Redirecting to supervisor zone:', targetUrl);
+                setRedirected(true);
+                navigate(targetUrl, { replace: true });
+              } else if (currentPath !== targetUrl) {
+                console.log('Wrong supervisor zone, redirecting to:', targetUrl);
+                setRedirected(true);
+                navigate(targetUrl, { replace: true });
+              }
+            }
+          } else {
+            console.log('❌ Could not find zone for supervisor');
+          }
+        } catch (error) {
+          console.error('Error fetching supervisor zone:', error);
+        } finally {
+          setLoadingZone(false);
+        }
+      } else {
+        setLoadingZone(false);
+      }
+    };
+    
+    fetchSupervisorZone();
+  }, [isSupervisor, user?.counter, user?.email, navigate, location.pathname, redirected]);
 
   const fetchUserCounter = async () => {
     try {
-      const response = await api.get(`/counters/${user.counter}`);
+      let counterId = user.counter;
+      if (typeof counterId === 'object' && counterId !== null) {
+        counterId = counterId._id || counterId.toString();
+      }
+      const response = await api.get(`/counters/${counterId}`);
       setUserCounter(response.data.counter);
     } catch (error) {
       console.error('Failed to fetch user counter:', error);
     }
   };
 
-  const fetchZones = async () => {
-    try {
-      const response = await api.get('/zones');
-      setAvailableZones(response.data.zones || []);
-    } catch (error) {
-      console.error('Failed to fetch zones:', error);
-    }
-  };
-
   const getNavigation = () => {
     const nav = [];
-    nav.push({ name: 'Dashboard', href: '/dashboard', icon: HomeIcon });
-
-    if (isOfficer && userCounter) {
-      nav.push({ 
-        name: 'My Counter', 
-        href: `/counter/${userCounter._id}`, 
-        icon: ComputerDesktopIcon 
-      });
+    
+    // FOR SUPERVISORS: ONLY SHOW ESCALATIONS with their zone
+    if (isSupervisor) {
+      if (supervisorZoneId) {
+        console.log('Building navigation with zone ID:', supervisorZoneId);
+        nav.push({ 
+          name: 'Escalations', 
+          href: `/supervisor/${supervisorZoneId}`, 
+          icon: ExclamationTriangleIcon 
+        });
+      } else if (loadingZone) {
+        nav.push({ 
+          name: 'Loading...', 
+          href: '#', 
+          icon: ExclamationTriangleIcon,
+          disabled: true
+        });
+      }
+      return nav;
     }
-
+    
+    // FOR ADMINS: Full navigation
+    if (isAdmin) {
+      nav.push({ name: 'Dashboard', href: '/dashboard', icon: HomeIcon });
+      nav.push({ name: 'Tickets', href: '/tickets', icon: TicketIcon });
+      nav.push({ name: 'Base Data', href: '/base-data', icon: Squares2X2Icon });
+      nav.push({ name: 'Users', href: '/users', icon: UsersIcon });
+      nav.push({ name: 'Role Permissions', href: '/role-permissions', icon: ShieldCheckIcon });
+      nav.push({ name: 'Reports', href: '/reports', icon: ChartBarIcon });
+      return nav;
+    }
+    
+    // FOR OFFICERS (Verifier, Cashier, Validator, Authorizer)
+    if (isOfficer) {
+      nav.push({ name: 'Dashboard', href: '/dashboard', icon: HomeIcon });
+      
+      if (userCounter) {
+        nav.push({ 
+          name: 'My Counter', 
+          href: `/counter/${userCounter._id}`, 
+          icon: ComputerDesktopIcon 
+        });
+      }
+      
+      nav.push({ name: 'Tickets', href: '/tickets', icon: TicketIcon });
+      return nav;
+    }
+    
+    // Default navigation
+    nav.push({ name: 'Dashboard', href: '/dashboard', icon: HomeIcon });
     if (hasPermission(PERMISSIONS.VIEW_TICKETS)) {
       nav.push({ name: 'Tickets', href: '/tickets', icon: TicketIcon });
     }
-
-    if (isSupervisor || isAdmin) {
-      let zoneId = '';
-      if (userCounter?.group?.zone?._id) {
-        zoneId = userCounter.group.zone._id;
-      } else if (availableZones.length > 0) {
-        zoneId = availableZones[0]._id;
-      }
-      
-      if (zoneId) {
-        nav.push({ 
-          name: 'Escalations', 
-          href: `/supervisor/${zoneId}`, 
-          icon: ExclamationTriangleIcon 
-        });
-      }
-    }
-
-    if (isAdmin) {
-      nav.push({ name: 'Base Data', href: '/base-data', icon: Squares2X2Icon });
-    }
-
-    if (isAdmin && hasPermission(PERMISSIONS.MANAGE_USERS)) {
-      nav.push({ name: 'Users', href: '/users', icon: UsersIcon });
-    }
-
-
-    if (isAdmin) {
-      nav.push({ name: 'Role Permissions', href: '/role-permissions', icon: ShieldCheckIcon });
-    }
-
-    if (hasPermission(PERMISSIONS.VIEW_REPORTS)) {
-      nav.push({ name: 'Reports', href: '/reports', icon: ChartBarIcon });
-    }
-
+    
     return nav;
   };
 
@@ -121,6 +217,18 @@ const Layout = () => {
       navigate(href);
     }
   };
+
+  // Show loading while fetching supervisor's zone
+  if (isSupervisor && loadingZone) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
@@ -190,7 +298,6 @@ const Layout = () => {
       {/* Desktop sidebar - Collapsible */}
       <div className={`hidden lg:fixed lg:inset-y-0 lg:flex lg:flex-col transition-all duration-300 ease-in-out z-20 ${collapsed ? 'lg:w-16' : 'lg:w-56'}`}>
         <div className="flex flex-col flex-1 bg-white shadow-xl">
-          {/* Sidebar Header with Logo */}
           <div className="flex items-center justify-between h-14 px-3 border-b border-gray-100">
             {!collapsed && (
               <div className="flex items-center space-x-2 overflow-hidden transition-opacity duration-300">
@@ -215,7 +322,6 @@ const Layout = () => {
             </button>
           </div>
 
-          {/* Navigation */}
           <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
             {currentNavigation.map((item) => (
               <button
@@ -243,7 +349,6 @@ const Layout = () => {
             ))}
           </nav>
 
-          {/* User Section */}
           <div className="p-3 border-t border-gray-100">
             {!collapsed ? (
               <>
@@ -297,7 +402,6 @@ const Layout = () => {
             >
               <Bars3Icon className="h-5 w-5" />
             </button>
-            
           </div>
         </div>
         <main className="p-4">

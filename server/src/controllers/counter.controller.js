@@ -1,6 +1,8 @@
 import Counter from "../models/Counter.js";
 import Group from "../models/Group.js";
 import User from "../models/User.js";
+import Zone from "../models/Zone.js";
+import Ticket from "../models/Ticket.js";
 
 export const getCounters = async (req, res) => {
   try {
@@ -15,7 +17,13 @@ export const getCounters = async (req, res) => {
     const counters = await Counter.find(query)
       .populate('services')
       .populate('assignedUser', 'fullName email role username')
-      .populate('group', 'name code')
+      .populate({
+        path: 'group',
+        populate: {
+          path: 'zone',
+          select: 'name code _id'
+        }
+      })
       .sort({ counterNumber: 1 });
     
     res.json({ success: true, counters });
@@ -31,7 +39,13 @@ export const getCounterById = async (req, res) => {
     const counter = await Counter.findById(id)
       .populate('services')
       .populate('assignedUser', 'fullName email role username')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: {
+          path: 'zone',
+          select: 'name code _id'
+        }
+      });
     
     if (!counter) {
       return res.status(404).json({ message: 'Counter not found' });
@@ -50,26 +64,22 @@ export const createCounter = async (req, res) => {
     
     console.log('Creating counter:', { counterNumber, type, groupId, assignedUserId });
     
-    // Validate required fields
     if (!counterNumber || !type || !groupId) {
       return res.status(400).json({ 
         message: 'Missing required fields: counterNumber, type, and groupId are required' 
       });
     }
     
-    // Check if group exists
     const group = await Group.findById(groupId);
     if (!group) {
       return res.status(404).json({ message: 'Group not found' });
     }
     
-    // Check if counter number is unique
     const existingCounter = await Counter.findOne({ counterNumber });
     if (existingCounter) {
       return res.status(400).json({ message: 'Counter number already exists' });
     }
     
-    // Check if assigned user exists and is valid
     let assignedUser = null;
     if (assignedUserId) {
       assignedUser = await User.findById(assignedUserId);
@@ -77,7 +87,6 @@ export const createCounter = async (req, res) => {
         return res.status(404).json({ message: 'Assigned user not found' });
       }
       
-      // Check if user is already assigned to another counter
       const existingAssignment = await Counter.findOne({ 
         assignedUser: assignedUserId, 
         isActive: true 
@@ -88,7 +97,6 @@ export const createCounter = async (req, res) => {
         });
       }
       
-      // Check if user role matches counter type
       if (assignedUser.role !== type && assignedUser.role !== 'Admin') {
         return res.status(400).json({ 
           message: `User role (${assignedUser.role}) does not match counter type (${type})` 
@@ -96,7 +104,6 @@ export const createCounter = async (req, res) => {
       }
     }
     
-    // Create counter
     const counter = new Counter({
       counterNumber,
       name: name || `Counter ${counterNumber}`,
@@ -110,20 +117,20 @@ export const createCounter = async (req, res) => {
     
     await counter.save();
     
-    // Add counter to group
     group.counters.push(counter._id);
     await group.save();
     
-    // Update user's counter assignment if user is assigned
     if (assignedUserId) {
       await User.findByIdAndUpdate(assignedUserId, { counter: counter._id });
     }
     
-    // Populate the counter with references
     const populatedCounter = await Counter.findById(counter._id)
       .populate('services')
       .populate('assignedUser', 'fullName email role')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: { path: 'zone', select: 'name code _id' }
+      });
     
     console.log('Counter created successfully:', counter.counterNumber);
     
@@ -151,24 +158,20 @@ export const updateCounter = async (req, res) => {
       return res.status(404).json({ message: 'Counter not found' });
     }
     
-    // Handle user assignment changes
     if (assignedUserId !== undefined) {
       const oldUserId = counter.assignedUser;
       
       if (assignedUserId === null || assignedUserId === '') {
-        // Remove user assignment
         if (oldUserId) {
           await User.findByIdAndUpdate(oldUserId, { $unset: { counter: "" } });
         }
         counter.assignedUser = null;
       } else if (assignedUserId !== oldUserId?.toString()) {
-        // Assign new user
         const newUser = await User.findById(assignedUserId);
         if (!newUser) {
           return res.status(404).json({ message: 'User not found' });
         }
         
-        // Check if user is already assigned to another counter
         const existingAssignment = await Counter.findOne({ 
           assignedUser: assignedUserId, 
           isActive: true,
@@ -180,7 +183,6 @@ export const updateCounter = async (req, res) => {
           });
         }
         
-        // Check if user role matches counter type
         const counterType = type || counter.type;
         if (newUser.role !== counterType && newUser.role !== 'Admin') {
           return res.status(400).json({ 
@@ -188,18 +190,15 @@ export const updateCounter = async (req, res) => {
           });
         }
         
-        // Remove old assignment if exists
         if (oldUserId) {
           await User.findByIdAndUpdate(oldUserId, { $unset: { counter: "" } });
         }
         
-        // Assign new user
         await User.findByIdAndUpdate(assignedUserId, { counter: counter._id });
         counter.assignedUser = assignedUserId;
       }
     }
     
-    // Handle group change
     if (groupId && groupId !== counter.group.toString()) {
       const newGroup = await Group.findById(groupId);
       if (!newGroup) {
@@ -217,7 +216,6 @@ export const updateCounter = async (req, res) => {
       counter.group = groupId;
     }
     
-    // Update other fields
     if (name) counter.name = name;
     if (type) counter.type = type;
     if (services) counter.services = services;
@@ -229,7 +227,10 @@ export const updateCounter = async (req, res) => {
     const updatedCounter = await Counter.findById(counter._id)
       .populate('services')
       .populate('assignedUser', 'fullName email role')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: { path: 'zone', select: 'name code _id' }
+      });
     
     res.json({ success: true, counter: updatedCounter });
   } catch (error) {
@@ -246,14 +247,12 @@ export const deleteCounter = async (req, res) => {
       return res.status(404).json({ message: 'Counter not found' });
     }
     
-    // Remove counter from group
     const group = await Group.findById(counter.group);
     if (group) {
       group.counters = group.counters.filter(c => c.toString() !== counter._id.toString());
       await group.save();
     }
     
-    // Remove user assignment
     if (counter.assignedUser) {
       await User.findByIdAndUpdate(counter.assignedUser, { $unset: { counter: "" } });
     }
@@ -275,31 +274,26 @@ export const assignUserToCounter = async (req, res) => {
       return res.status(400).json({ message: 'User ID is required' });
     }
     
-    // Find counter
     const counter = await Counter.findById(counterId);
     if (!counter) {
       return res.status(404).json({ message: 'Counter not found' });
     }
     
-    // Find user
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    // Check if user is active
     if (!user.isActive) {
       return res.status(400).json({ message: 'User is inactive' });
     }
     
-    // Check if user role matches counter type
     if (user.role !== counter.type && user.role !== 'Admin') {
       return res.status(400).json({ 
         message: `User role (${user.role}) does not match counter type (${counter.type})` 
       });
     }
     
-    // Check if user is already assigned to another counter
     const existingAssignment = await Counter.findOne({ 
       assignedUser: userId, 
       isActive: true,
@@ -312,21 +306,21 @@ export const assignUserToCounter = async (req, res) => {
       });
     }
     
-    // Remove previous user assignment from this counter if exists
     if (counter.assignedUser) {
       await User.findByIdAndUpdate(counter.assignedUser, { $unset: { counter: "" } });
     }
     
-    // Assign user to counter
     counter.assignedUser = userId;
     await counter.save();
     
-    // Update user's counter reference
     await User.findByIdAndUpdate(userId, { counter: counter._id });
     
     const updatedCounter = await Counter.findById(counterId)
       .populate('assignedUser', 'fullName email role')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: { path: 'zone', select: 'name code _id' }
+      });
     
     res.json({ 
       success: true, 
@@ -354,7 +348,6 @@ export const removeUserFromCounter = async (req, res) => {
     
     const user = await User.findById(counter.assignedUser);
     
-    // Remove user assignment
     await User.findByIdAndUpdate(counter.assignedUser, { $unset: { counter: "" } });
     counter.assignedUser = null;
     await counter.save();
@@ -376,7 +369,10 @@ export const getCountersByUser = async (req, res) => {
     
     const counters = await Counter.find({ assignedUser: userId })
       .populate('services')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: { path: 'zone', select: 'name code _id' }
+      });
     
     res.json({ success: true, counters });
   } catch (error) {
@@ -420,7 +416,10 @@ export const getAvailableCounters = async (req, res) => {
     const counters = await Counter.find(query)
       .populate('services')
       .populate('assignedUser', 'fullName email')
-      .populate('group', 'name code');
+      .populate({
+        path: 'group',
+        populate: { path: 'zone', select: 'name code _id' }
+      });
     
     res.json({ success: true, counters });
   } catch (error) {
@@ -428,7 +427,7 @@ export const getAvailableCounters = async (req, res) => {
     res.status(500).json({ message: 'Failed to get available counters' });
   }
 };
-// Add this to counter.controller.js
+
 export const resetCounterStatus = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -470,7 +469,6 @@ export const resetAllCountersInZone = async (req, res) => {
       { $set: { status: 'Available', currentTicket: null } }
     );
     
-    // Reset any stuck tickets
     await Ticket.updateMany(
       { zone: zoneId, status: 'Serving' },
       { $set: { status: 'Waiting', calledAt: null } }
