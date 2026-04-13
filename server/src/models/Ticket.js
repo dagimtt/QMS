@@ -33,7 +33,7 @@ const ticketSchema = new mongoose.Schema({
   },
   currentStep: {
     type: String,
-    enum: ['Verification', 'Validation', 'Authorization', 'Completed'],
+    enum: ['Verification', 'Payment', 'Validation', 'Authorization', 'Completed'],
     default: 'Verification'
   },
   customerInfo: {
@@ -49,7 +49,7 @@ const ticketSchema = new mongoose.Schema({
   },
   assignedTo: {
     type: String,
-    enum: ['Verifier', 'Validator', 'Authorizer'],
+    enum: ['Verifier', 'Cashier', 'Validator', 'Authorizer'],
     default: 'Verifier'
   },
   calledAt: Date,
@@ -61,7 +61,6 @@ const ticketSchema = new mongoose.Schema({
   serviceTime: { type: Number, default: 0 },
   totalTime: { type: Number, default: 0 },
   isPriority: { type: Boolean, default: false },
-  // FIXED: Removed enum restriction
   priorityReason: { type: String, default: '' },
   
   // Escalation Details

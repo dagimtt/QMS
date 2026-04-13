@@ -109,6 +109,7 @@ export const createTicket = async (req, res) => {
 };
 
 // Call next ticket - First check assigned tickets, then shared queue
+// Call next ticket - First check assigned tickets, then shared queue
 export const callNextTicket = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -123,11 +124,24 @@ export const callNextTicket = async (req, res) => {
     
     console.log(`Calling next ticket for ${counter.type} in zone ${zone.name}`);
     
+    // Determine which step this counter handles based on its type
     let currentStep;
-    if (counter.type === 'Verifier') currentStep = 'Verification';
-    else if (counter.type === 'Validator') currentStep = 'Validation';
-    else if (counter.type === 'Authorizer') currentStep = 'Authorization';
-    else currentStep = 'Verification';
+    switch (counter.type) {
+      case 'Verifier':
+        currentStep = 'Verification';
+        break;
+      case 'Cashier':
+        currentStep = 'Payment';
+        break;
+      case 'Validator':
+        currentStep = 'Validation';
+        break;
+      case 'Authorizer':
+        currentStep = 'Authorization';
+        break;
+      default:
+        currentStep = 'Verification';
+    }
     
     // FIRST: Check for tickets already assigned to this counter (returned tickets)
     let nextTicket = await Ticket.findOne({
@@ -193,11 +207,13 @@ export const callNextTicket = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to call next ticket', error: error.message });
   }
 };
-
 // Complete ticket and move to next step
+// Complete ticket and move to next step based on service workflow
 export const completeTicket = async (req, res) => {
   try {
     const { ticketId } = req.params;
+    
+    console.log('Complete ticket request:', ticketId);
     
     const ticket = await Ticket.findById(ticketId);
     if (!ticket) {
@@ -209,21 +225,26 @@ export const completeTicket = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Zone not found' });
     }
     
+    // Get the service to know the workflow
+    const service = await Service.findById(ticket.service);
+    if (!service) {
+      return res.status(404).json({ success: false, message: 'Service not found' });
+    }
+    
     const currentStep = ticket.currentStep;
+    const workflowPath = service.workflowPath || ['Verification', 'Validation', 'Authorization'];
     
-    const nextStepMap = {
-      'Verification': 'Validation',
-      'Validation': 'Authorization',
-      'Authorization': 'Completed'
-    };
+    console.log('Service workflow:', workflowPath);
+    console.log('Current step:', currentStep);
     
-    const counterTypeMap = {
-      'Verification': 'Verifier',
-      'Validation': 'Validator',
-      'Authorization': 'Authorizer'
-    };
+    // Find the index of current step in workflow
+    const currentStepIndex = workflowPath.indexOf(currentStep);
     
-    if (currentStep === 'Authorization') {
+    // Check if this is the last step
+    const isLastStep = currentStepIndex === workflowPath.length - 1;
+    
+    if (isLastStep) {
+      // Final step - complete the ticket
       ticket.status = 'Completed';
       ticket.completedAt = new Date();
       ticket.serviceTime = ticket.calledAt ? Math.floor((ticket.completedAt - ticket.calledAt) / 60000) : 0;
@@ -233,7 +254,8 @@ export const completeTicket = async (req, res) => {
         action: 'Ticket Completed',
         user: req.user._id,
         userRole: req.user.role,
-        details: { finalStep: currentStep, zone: zone.name }
+        timestamp: new Date(),
+        details: { finalStep: currentStep, zone: zone.name, service: service.name }
       });
       
       await ticket.save();
@@ -252,15 +274,26 @@ export const completeTicket = async (req, res) => {
       return res.json({
         success: true,
         ticket: formattedTicket,
-        message: `Ticket ${formattedTicket.displayNumber} completed successfully in ${zone.name}!`
+        message: `Ticket ${formattedTicket.displayNumber} completed successfully for ${service.name}!`
       });
     }
     
-    const nextStep = nextStepMap[currentStep];
-    const requiredCounterType = counterTypeMap[nextStep];
+    // Move to next step in workflow
+    const nextStep = workflowPath[currentStepIndex + 1];
     
-    console.log(`Moving ticket from ${currentStep} to ${nextStep} queue in zone ${zone.name}`);
+    // Map workflow step to counter type
+    const stepToCounterType = {
+      'Verification': 'Verifier',
+      'Payment': 'Cashier',
+      'Validation': 'Validator',
+      'Authorization': 'Authorizer'
+    };
     
+    const requiredCounterType = stepToCounterType[nextStep];
+    
+    console.log(`Moving ticket from ${currentStep} to ${nextStep} (${requiredCounterType})`);
+    
+    // Update ticket for next step
     ticket.currentStep = nextStep;
     ticket.assignedTo = requiredCounterType;
     ticket.assignedCounter = null;
@@ -271,9 +304,11 @@ export const completeTicket = async (req, res) => {
       action: 'Step Completed',
       user: req.user._id,
       userRole: req.user.role,
+      timestamp: new Date(),
       details: { 
         completedStep: currentStep, 
         nextStep,
+        service: service.name,
         zone: zone.name,
         message: `Ticket moved to ${requiredCounterType} queue`
       }
@@ -281,24 +316,26 @@ export const completeTicket = async (req, res) => {
     
     await ticket.save();
     
+    // Clear current counter's current ticket
     await Counter.updateMany(
       { currentTicket: ticketId },
       { $unset: { currentTicket: "" }, status: 'Available' }
     );
     
-    const queuePosition = await getQueuePosition(zone._id, requiredCounterType);
-    
     const formattedTicket = {
       ...ticket.toObject(),
       number: ticket.ticketNumber.slice(-4),
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
-      queuePosition: queuePosition
+      nextStep: nextStep,
+      requiredCounterType: requiredCounterType
     };
+    
+    console.log(`Ticket updated: currentStep=${ticket.currentStep}, assignedTo=${ticket.assignedTo}`);
     
     res.json({
       success: true,
       ticket: formattedTicket,
-      message: `Ticket ${formattedTicket.displayNumber} moved to ${requiredCounterType} queue. Position: ${queuePosition}`
+      message: `Ticket ${formattedTicket.displayNumber} moved to ${requiredCounterType} (${nextStep}) queue.`
     });
   } catch (error) {
     console.error('Complete ticket error:', error);
@@ -789,9 +826,12 @@ export const getSupervisorDashboard = async (req, res) => {
 };
 
 // Get counter dashboard - Shows both assigned tickets and shared queue tickets
+// Get counter dashboard - Shows both assigned tickets and shared queue tickets
 export const getCounterDashboard = async (req, res) => {
   try {
     const { counterId } = req.params;
+    
+    console.log('Fetching dashboard for counter:', counterId);
     
     const counter = await Counter.findById(counterId)
       .populate('services', 'name code')
@@ -805,6 +845,7 @@ export const getCounterDashboard = async (req, res) => {
     }
     
     const zone = counter.group?.zone;
+    console.log('Zone:', zone?.name);
     
     // Get current ticket being served
     let currentTicket = null;
@@ -812,9 +853,10 @@ export const getCounterDashboard = async (req, res) => {
       currentTicket = await Ticket.findById(counter.currentTicket)
         .populate('service', 'name code')
         .populate('customerInfo');
+      console.log('Current ticket:', currentTicket?.ticketNumber);
     }
     
-    // Get tickets ALREADY ASSIGNED to this counter (returned tickets, etc.)
+    // STEP 1: Get tickets ALREADY ASSIGNED to this counter
     const assignedTickets = await Ticket.find({
       assignedCounter: counterId,
       status: { $in: ['Waiting', 'Priority'] },
@@ -827,26 +869,45 @@ export const getCounterDashboard = async (req, res) => {
     .populate('customerInfo')
     .sort({ isPriority: -1, createdAt: 1 });
     
-    // Get UNAssigned tickets from shared queue that this counter can call
-    let currentStep;
-    if (counter.type === 'Verifier') currentStep = 'Verification';
-    else if (counter.type === 'Validator') currentStep = 'Validation';
-    else if (counter.type === 'Authorizer') currentStep = 'Authorization';
-    else currentStep = 'Verification';
+    console.log('Assigned tickets found:', assignedTickets.length);
     
+    // STEP 2: Get the current step for this counter type
+    let currentStep;
+    switch (counter.type) {
+      case 'Verifier':
+        currentStep = 'Verification';
+        break;
+      case 'Cashier':
+        currentStep = 'Payment';
+        break;
+      case 'Validator':
+        currentStep = 'Validation';
+        break;
+      case 'Authorizer':
+        currentStep = 'Authorization';
+        break;
+      default:
+        currentStep = 'Verification';
+    }
+    
+    // STEP 3: Get UNAssigned tickets from shared queue
     const unassignedTickets = await Ticket.find({
       zone: zone?._id,
       assignedTo: counter.type,
       status: 'Waiting',
       currentStep: currentStep,
-      assignedCounter: null  // Not assigned to any counter yet
+      assignedCounter: null
     })
     .populate('service', 'name code')
     .populate('customerInfo')
     .sort({ isPriority: -1, createdAt: 1 });
     
-    // Combine both lists: assigned tickets first (priority), then unassigned
+    console.log('Unassigned tickets found:', unassignedTickets.length);
+    
+    // Combine both lists: assigned tickets first, then unassigned
     const allWaitingTickets = [...assignedTickets, ...unassignedTickets];
+    
+    console.log('Total waiting tickets:', allWaitingTickets.length);
     
     const formattedWaiting = allWaitingTickets.map((ticket, index) => ({
       ...ticket.toObject(),
@@ -854,7 +915,7 @@ export const getCounterDashboard = async (req, res) => {
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
       waitingTime: Math.floor((new Date() - new Date(ticket.createdAt)) / 60000),
       queuePosition: index + 1,
-      isAssigned: ticket.assignedCounter !== null  // Mark if already assigned to this counter
+      isAssigned: ticket.assignedCounter !== null
     }));
     
     let formattedCurrent = null;

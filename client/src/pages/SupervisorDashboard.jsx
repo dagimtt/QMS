@@ -21,7 +21,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 const SupervisorDashboard = () => {
-  const { zoneId } = useParams();
+  const { zoneId } = useParams(); // Get zoneId from URL
   const navigate = useNavigate();
   const { user } = useAuth();
   const { hasPermission, isAdmin, isSupervisor } = usePermissions();
@@ -36,37 +36,14 @@ const SupervisorDashboard = () => {
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // Get supervisor's zone from user data if no zoneId in URL
+  // Debug logging
   useEffect(() => {
-    const fetchSupervisorZone = async () => {
-      if (isSupervisor && !zoneId) {
-        try {
-          const response = await api.get('/auth/me');
-          const userData = response.data.user;
-          
-          if (userData.counter) {
-            const counterResponse = await api.get(`/counters/${userData.counter}`);
-            const zoneFromCounter = counterResponse.data.counter?.group?.zone?._id;
-            if (zoneFromCounter) {
-              navigate(`/supervisor/${zoneFromCounter}`, { replace: true });
-              return;
-            }
-          }
-          
-          const zonesResponse = await api.get('/zones');
-          const zones = zonesResponse.data.zones || [];
-          if (zones.length > 0) {
-            navigate(`/supervisor/${zones[0]._id}`, { replace: true });
-          }
-        } catch (error) {
-          console.error('Failed to fetch supervisor zone:', error);
-          toast.error('Could not determine your zone');
-        }
-      }
-    };
-    
-    fetchSupervisorZone();
-  }, [isSupervisor, zoneId, navigate]);
+    console.log('=== SupervisorDashboard Debug ===');
+    console.log('URL zoneId parameter:', zoneId);
+    console.log('User role:', user?.role);
+    console.log('Is Supervisor:', isSupervisor);
+    console.log('Is Admin:', isAdmin);
+  }, [zoneId, user, isSupervisor, isAdmin]);
 
   // Check if user has access
   useEffect(() => {
@@ -77,13 +54,15 @@ const SupervisorDashboard = () => {
     }
   }, [isAdmin, isSupervisor, navigate]);
 
+  // Fetch dashboard data when zoneId changes
   useEffect(() => {
     if (zoneId && (isAdmin || isSupervisor)) {
+      console.log('Fetching dashboard for zone ID:', zoneId);
       fetchDashboard();
     }
     
     const interval = setInterval(() => {
-      if (autoRefresh && (isAdmin || isSupervisor)) {
+      if (autoRefresh && (isAdmin || isSupervisor) && zoneId) {
         fetchDashboard();
       }
     }, 10000);
@@ -92,8 +71,21 @@ const SupervisorDashboard = () => {
   }, [zoneId, autoRefresh, isAdmin, isSupervisor]);
 
   const fetchDashboard = async () => {
+    if (!zoneId) {
+      console.log('No zoneId available, skipping fetch');
+      return;
+    }
+    
     try {
+      console.log('Calling API: /tickets/supervisor/${zoneId}/dashboard');
       const response = await api.get(`/tickets/supervisor/${zoneId}/dashboard`);
+      
+      console.log('Dashboard response:', {
+        zone: response.data.zone,
+        escalatedCount: response.data.escalatedTickets?.length,
+        stats: response.data.stats
+      });
+      
       setZone(response.data.zone);
       setEscalatedTickets(response.data.escalatedTickets);
       setCounters(response.data.counters);
@@ -112,32 +104,29 @@ const SupervisorDashboard = () => {
   };
 
   const handleResolve = async (ticketId, action, resolution) => {
-  setActionLoading(true);
-  console.log('Resolving escalation:', { ticketId, action, resolution });
-  try {
-    const response = await api.post(`/tickets/${ticketId}/resolve-escalation`, {
-      resolution: resolution,
-      action: action
-    });
-    
-    console.log('Resolve response:', response.data);
-    
-    if (response.data.success) {
-      toast.success(response.data.message);
-      // Remove the ticket from the local state immediately
-      setEscalatedTickets(prev => prev.filter(t => t._id !== ticketId));
-      // Refresh dashboard to update stats
-      await fetchDashboard();
-    } else {
-      toast.error(response.data.message || 'Failed to resolve escalation');
+    setActionLoading(true);
+    console.log('Resolving escalation:', { ticketId, action, resolution });
+    try {
+      const response = await api.post(`/tickets/${ticketId}/resolve-escalation`, {
+        resolution: resolution,
+        action: action
+      });
+      
+      if (response.data.success) {
+        toast.success(response.data.message);
+        setEscalatedTickets(prev => prev.filter(t => t._id !== ticketId));
+        await fetchDashboard();
+      } else {
+        toast.error(response.data.message || 'Failed to resolve escalation');
+      }
+    } catch (error) {
+      console.error('Resolve escalation error:', error);
+      toast.error(error.response?.data?.message || 'Failed to resolve escalation');
+    } finally {
+      setActionLoading(false);
     }
-  } catch (error) {
-    console.error('Resolve escalation error:', error);
-    toast.error(error.response?.data?.message || 'Failed to resolve escalation');
-  } finally {
-    setActionLoading(false);
-  }
-};
+  };
+
   const showResolveDialog = (ticket) => {
     const resolution = prompt(
       `Resolving escalation for ticket #${ticket.displayNumber}\n\n` +
@@ -228,7 +217,6 @@ const SupervisorDashboard = () => {
         </div>
       </div>
 
-      {/* Rest of your JSX remains the same */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -250,7 +238,7 @@ const SupervisorDashboard = () => {
           </div>
         </div>
 
-        {/* Escalated Tickets Section - Same as before */}
+        {/* Escalated Tickets Section */}
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div className="bg-red-600 px-6 py-4">
             <h2 className="text-xl font-semibold text-white flex items-center">
@@ -270,7 +258,6 @@ const SupervisorDashboard = () => {
               <div className="space-y-4">
                 {escalatedTickets.map((ticket) => (
                   <div key={ticket._id} className="border border-gray-100 rounded-xl p-5 hover:shadow-md transition">
-                    {/* Ticket content - same as before */}
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <div className="flex items-center space-x-2">

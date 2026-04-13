@@ -70,7 +70,7 @@ function App() {
 
               <Routes>
 
-                {/* 🌐 Public Routes */}
+                {/* Public Routes */}
                 <Route path="/login" element={<Login />} />
                 <Route path="/kiosk-setup" element={<KioskSetup />} />
                 <Route path="/kiosk" element={<Kiosk />} />
