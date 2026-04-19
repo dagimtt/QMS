@@ -102,7 +102,6 @@ const Layout = () => {
             if (zone && zone._id) {
               setSupervisorZoneId(zone._id);
               console.log('✅ Supervisor zone set to:', zone._id, zone.name);
-              
               // Redirect to the correct zone if needed
               const targetUrl = `/supervisor/${zone._id}`;
               const currentPath = location.pathname;
@@ -176,6 +175,7 @@ const Layout = () => {
       nav.push({ name: 'Base Data', href: '/base-data', icon: Squares2X2Icon });
       nav.push({ name: 'Users', href: '/users', icon: UsersIcon });
       nav.push({ name: 'Role Permissions', href: '/role-permissions', icon: ShieldCheckIcon });
+      nav.push({ name: 'Performance', href: '/performance', icon: ChartBarIcon });
       nav.push({ name: 'Reports', href: '/reports', icon: ChartBarIcon });
       return nav;
     }

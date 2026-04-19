@@ -15,6 +15,7 @@ import counterRoutes from './routes/counter.routes.js';
 import groupRoutes from './routes/group.routes.js';
 import zoneRoutes from './routes/zone.routes.js';
 import ticketRoutes from './routes/ticket.routes.js';
+import performanceRoutes from './routes/performance.routes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -56,6 +57,7 @@ app.use('/api/counters', counterRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/zones', zoneRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/performance', performanceRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

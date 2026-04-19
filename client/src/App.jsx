@@ -18,6 +18,7 @@ import CounterDashboard from './pages/CounterDashboard';
 import SupervisorDashboard from './pages/SupervisorDashboard';
 import PermissionManagement from './pages/admin/PermissionManagement';
 import RolePermissionManagement from './pages/admin/RolePermissionManagement';
+import PerformanceDashboard from './pages/PerformanceDashboard';
 
 import BaseData from './pages/BaseData';
 import ZoneManagement from './pages/admin/ZoneManagement';
@@ -76,13 +77,13 @@ function App() {
                 <Route path="/kiosk" element={<Kiosk />} />
                 <Route path="/display/:zoneId" element={<PublicDisplay />} />
 
-                {/*  Special dashboards */}
+                {/* Special dashboards */}
                 <Route path="/counter/:counterId" element={<CounterDashboard />} />
 
-                {/*  Auth Protected Routes */}
+                {/* Auth Protected Routes */}
                 <Route element={<ProtectedRoute />}>
 
-                  {/*  Layout Wrapper */}
+                  {/* Layout Wrapper */}
                   <Route element={<Layout />}>
 
                     <Route path="/" element={<Navigate to="/dashboard" />} />
@@ -95,12 +96,22 @@ function App() {
                       <Route path="/tickets" element={<TicketManagement />} />
                     </Route>
 
-                    {/* SUPERVISOR DASHBOARD - Updated with permission protection */}
+                    {/* SUPERVISOR DASHBOARD */}
                     <Route 
                       path="/supervisor/:zoneId" 
                       element={
                         <ProtectedRouteWithPermission permission={PERMISSIONS.VIEW_ESCALATIONS}>
                           <SupervisorDashboard />
+                        </ProtectedRouteWithPermission>
+                      } 
+                    />
+
+                    {/* PERFORMANCE DASHBOARD - For Supervisors and Admins */}
+                    <Route 
+                      path="/performance" 
+                      element={
+                        <ProtectedRouteWithPermission permission={PERMISSIONS.VIEW_REPORTS}>
+                          <PerformanceDashboard />
                         </ProtectedRouteWithPermission>
                       } 
                     />
@@ -142,7 +153,7 @@ function App() {
                   </Route>
                 </Route>
 
-                {/* ❌ Fallback */}
+                {/* Fallback */}
                 <Route path="*" element={<Navigate to="/dashboard" />} />
 
               </Routes>

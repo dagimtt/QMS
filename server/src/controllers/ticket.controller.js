@@ -4,7 +4,7 @@ import Service from "../models/Service.js";
 import Counter from "../models/Counter.js";
 import Zone from "../models/Zone.js";
 import Group from "../models/Group.js";
-import User from "../models/User.js"; // Add this import
+import User from "../models/User.js";
 
 // Helper function to get queue position
 async function getQueuePosition(zoneId, assignedTo) {
@@ -109,7 +109,6 @@ export const createTicket = async (req, res) => {
 };
 
 // Call next ticket - First check assigned tickets, then shared queue
-// Call next ticket - First check assigned tickets, then shared queue
 export const callNextTicket = async (req, res) => {
   try {
     const { counterId } = req.params;
@@ -177,6 +176,11 @@ export const callNextTicket = async (req, res) => {
     nextTicket.calledCount = (nextTicket.calledCount || 0) + 1;
     nextTicket.lastCalledAt = new Date();
     
+    // Start step tracking for performance
+    nextTicket.stepStartTime = new Date();
+    nextTicket.completedBy = req.user._id;
+    nextTicket.completedAtStep = currentStep;
+    
     nextTicket.auditLog.push({
       action: 'Ticket Called',
       user: req.user._id,
@@ -207,8 +211,8 @@ export const callNextTicket = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to call next ticket', error: error.message });
   }
 };
-// Complete ticket and move to next step
-// Complete ticket and move to next step based on service workflow
+
+// Complete ticket and move to next step based on service workflow with performance tracking
 export const completeTicket = async (req, res) => {
   try {
     const { ticketId } = req.params;
@@ -240,6 +244,21 @@ export const completeTicket = async (req, res) => {
     // Find the index of current step in workflow
     const currentStepIndex = workflowPath.indexOf(currentStep);
     
+    // Calculate step completion time for performance tracking
+    if (ticket.stepStartTime) {
+      const stepCompletionSeconds = Math.floor((new Date() - new Date(ticket.stepStartTime)) / 1000);
+      ticket.stepCompletionTime = stepCompletionSeconds;
+      
+      // Calculate efficiency score (lower time is better, optimal is 60 seconds)
+      const optimalTime = 60;
+      const efficiency = Math.max(0, Math.min(100, Math.round((optimalTime / stepCompletionSeconds) * 100)));
+      ticket.performanceMetrics = {
+        handlingTime: stepCompletionSeconds,
+        efficiency: efficiency,
+        responseTime: ticket.calledAt ? Math.floor((new Date(ticket.calledAt) - new Date(ticket.createdAt)) / 1000) : 0
+      };
+    }
+    
     // Check if this is the last step
     const isLastStep = currentStepIndex === workflowPath.length - 1;
     
@@ -250,12 +269,26 @@ export const completeTicket = async (req, res) => {
       ticket.serviceTime = ticket.calledAt ? Math.floor((ticket.completedAt - ticket.calledAt) / 60000) : 0;
       ticket.assignedCounter = null;
       
+      // Record final completion for performance
+      ticket.completedBy = req.user._id;
+      ticket.completedAtStep = currentStep;
+      
+      // Calculate total time for KPI
+      const totalSeconds = Math.floor((ticket.completedAt - ticket.createdAt) / 1000);
+      
       ticket.auditLog.push({
         action: 'Ticket Completed',
         user: req.user._id,
         userRole: req.user.role,
         timestamp: new Date(),
-        details: { finalStep: currentStep, zone: zone.name, service: service.name }
+        details: { 
+          finalStep: currentStep, 
+          zone: zone.name, 
+          service: service.name,
+          totalTimeSeconds: totalSeconds,
+          stepTimeSeconds: ticket.stepCompletionTime,
+          efficiency: ticket.performanceMetrics?.efficiency
+        }
       });
       
       await ticket.save();
@@ -293,12 +326,17 @@ export const completeTicket = async (req, res) => {
     
     console.log(`Moving ticket from ${currentStep} to ${nextStep} (${requiredCounterType})`);
     
+    // Record step completion for performance
+    ticket.completedBy = req.user._id;
+    ticket.completedAtStep = currentStep;
+    
     // Update ticket for next step
     ticket.currentStep = nextStep;
     ticket.assignedTo = requiredCounterType;
     ticket.assignedCounter = null;
     ticket.status = 'Waiting';
     ticket.calledAt = null;
+    ticket.stepStartTime = null; // Reset step start time for next step
     
     ticket.auditLog.push({
       action: 'Step Completed',
@@ -310,6 +348,7 @@ export const completeTicket = async (req, res) => {
         nextStep,
         service: service.name,
         zone: zone.name,
+        stepTimeSeconds: ticket.stepCompletionTime,
         message: `Ticket moved to ${requiredCounterType} queue`
       }
     });
@@ -327,7 +366,8 @@ export const completeTicket = async (req, res) => {
       number: ticket.ticketNumber.slice(-4),
       displayNumber: parseInt(ticket.ticketNumber.slice(-4)).toString(),
       nextStep: nextStep,
-      requiredCounterType: requiredCounterType
+      requiredCounterType: requiredCounterType,
+      stepCompletionTime: ticket.stepCompletionTime
     };
     
     console.log(`Ticket updated: currentStep=${ticket.currentStep}, assignedTo=${ticket.assignedTo}`);
@@ -378,6 +418,7 @@ export const markTicketAbsent = async (req, res) => {
     ticket.assignedCounter = null;
     ticket.calledAt = null;
     ticket.lastCalledAt = null;
+    ticket.stepStartTime = null;
     
     ticket.auditLog.push({
       action: 'Ticket Marked Absent',
@@ -429,6 +470,7 @@ export const markTicketAbsent = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to mark ticket as absent', error: error.message });
   }
 };
+
 export const escalateTicket = async (req, res) => {
   try {
     const { ticketId } = req.params;
@@ -487,6 +529,7 @@ export const escalateTicket = async (req, res) => {
       priorityReason: ''
     };
     ticket.assignedCounter = null;
+    ticket.stepStartTime = null;
     
     ticket.auditLog.push({
       action: 'Ticket Escalated',
@@ -627,6 +670,7 @@ export const resolveEscalation = async (req, res) => {
       // CRITICAL: Clear calledAt so it appears as a waiting ticket
       ticket.calledAt = null;
       ticket.lastCalledAt = null;
+      ticket.stepStartTime = null;
       
       ticket.escalationDetails.action = isPriority ? 'priority_return' : 'returned';
       ticket.escalationDetails.resolvedBy = req.user._id;
@@ -713,6 +757,7 @@ export const resolveEscalation = async (req, res) => {
       ticket.assignedCounter = null;
       ticket.calledAt = null;
       ticket.lastCalledAt = null;
+      ticket.stepStartTime = null;
       ticket.escalationDetails.action = 'resolved';
       ticket.escalationDetails.resolvedBy = req.user._id;
       ticket.escalationDetails.resolvedAt = new Date();
@@ -765,7 +810,7 @@ export const getSupervisorDashboard = async (req, res) => {
     const escalatedTickets = await Ticket.find({
       zone: zoneId,
       status: 'Escalated'
-         })
+    })
     .populate('service', 'name code')
     .populate('escalationDetails.escalatedBy', 'fullName email role')
     .populate('escalationDetails.originalVerifier', 'fullName email role')
@@ -825,7 +870,6 @@ export const getSupervisorDashboard = async (req, res) => {
   }
 };
 
-// Get counter dashboard - Shows both assigned tickets and shared queue tickets
 // Get counter dashboard - Shows both assigned tickets and shared queue tickets
 export const getCounterDashboard = async (req, res) => {
   try {
@@ -968,7 +1012,6 @@ export const getCounterDashboard = async (req, res) => {
   }
 };
 
-
 // Get all tickets
 export const getTickets = async (req, res) => {
   try {
@@ -1081,6 +1124,8 @@ export const getZoneQueueStatus = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to get zone queue status' });
   }
 };
+
+// Get today's statistics
 export const getTodayStats = async (req, res) => {
   try {
     const today = new Date();
@@ -1132,6 +1177,7 @@ export const getTodayStats = async (req, res) => {
   }
 };
 
+// Get serving tickets by zone (for public display)
 export const getServingTicketsByZone = async (req, res) => {
   try {
     const { zoneId } = req.params;

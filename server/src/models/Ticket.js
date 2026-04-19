@@ -52,6 +52,7 @@ const ticketSchema = new mongoose.Schema({
     enum: ['Verifier', 'Cashier', 'Validator', 'Authorizer'],
     default: 'Verifier'
   },
+  
   calledAt: Date,
   servedAt: Date,
   completedAt: Date,
@@ -63,6 +64,37 @@ const ticketSchema = new mongoose.Schema({
   isPriority: { type: Boolean, default: false },
   priorityReason: { type: String, default: '' },
   
+  // ========== PERFORMANCE TRACKING FIELDS ==========
+  // Track which officer completed this ticket/step
+  completedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    index: true
+  },
+  // Track which step was completed
+  completedAtStep: {
+    type: String,
+    enum: ['Verification', 'Payment', 'Validation', 'Authorization', 'Completed'],
+    default: null
+  },
+  // Time taken to complete this step (in seconds)
+  stepCompletionTime: {
+    type: Number,
+    default: 0
+  },
+  // Track start time of each step for accurate performance measurement
+  stepStartTime: {
+    type: Date,
+    default: null
+  },
+  // Performance metadata
+  performanceMetrics: {
+    responseTime: { type: Number, default: 0 }, // Time between call and service start
+    handlingTime: { type: Number, default: 0 }, // Time spent handling the ticket
+    idleTime: { type: Number, default: 0 }, // Time between steps
+    efficiency: { type: Number, default: 0 } // Calculated efficiency score (0-100)
+  },
+
   // Escalation Details
   escalationDetails: {
     reason: { type: String, default: '' },
@@ -104,6 +136,10 @@ ticketSchema.index({ zone: 1, status: 1 });
 ticketSchema.index({ assignedCounter: 1, status: 1 });
 ticketSchema.index({ assignedTo: 1, status: 1 });
 ticketSchema.index({ createdAt: -1 });
+// Performance indexes
+ticketSchema.index({ completedBy: 1, completedAt: -1 });
+ticketSchema.index({ completedAtStep: 1, completedAt: -1 });
+ticketSchema.index({ stepCompletionTime: 1 });
 
 // Generate unique ticket number
 ticketSchema.statics.generateTicketNumber = async function(zoneCode, groupCode) {
@@ -140,6 +176,83 @@ ticketSchema.methods.calculateTimes = function() {
     this.waitingTime = Math.floor((this.calledAt - this.createdAt) / 60000);
   }
   return this;
+};
+
+// Method to start tracking a step (called when ticket is assigned to officer)
+ticketSchema.methods.startStep = function(step, user) {
+  this.stepStartTime = new Date();
+  this.completedBy = user;
+  this.completedAtStep = step;
+  return this;
+};
+
+// Method to complete a step and record performance
+ticketSchema.methods.completeStep = function(step, user) {
+  if (this.stepStartTime) {
+    const completionTime = Math.floor((new Date() - this.stepStartTime) / 1000);
+    this.stepCompletionTime = completionTime;
+    this.serviceTime = completionTime;
+    
+    // Calculate efficiency score (lower is better)
+    // Assuming 60 seconds is optimal for a step
+    const optimalTime = 60;
+    const efficiency = Math.max(0, Math.min(100, (optimalTime / completionTime) * 100));
+    this.performanceMetrics = {
+      ...this.performanceMetrics,
+      handlingTime: completionTime,
+      efficiency: Math.round(efficiency)
+    };
+  }
+  
+  this.completedBy = user;
+  this.completedAtStep = step;
+  this.completedAt = new Date();
+  
+  return this;
+};
+
+// Method to calculate officer performance metrics
+ticketSchema.statics.getOfficerPerformance = async function(officerId, startDate, endDate) {
+  const match = {
+    completedBy: officerId,
+    status: 'Completed'
+  };
+  
+  if (startDate && endDate) {
+    match.completedAt = {
+      $gte: new Date(startDate),
+      $lte: new Date(endDate)
+    };
+  }
+  
+  const stats = await this.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: '$completedAtStep',
+        count: { $sum: 1 },
+        avgTime: { $avg: '$stepCompletionTime' },
+        totalTime: { $sum: '$stepCompletionTime' }
+      }
+    }
+  ]);
+  
+  const totalStats = await this.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: null,
+        totalTickets: { $sum: 1 },
+        overallAvgTime: { $avg: '$stepCompletionTime' },
+        totalTime: { $sum: '$stepCompletionTime' }
+      }
+    }
+  ]);
+  
+  return {
+    byStep: stats,
+    overall: totalStats[0] || { totalTickets: 0, overallAvgTime: 0, totalTime: 0 }
+  };
 };
 
 // Add audit log
