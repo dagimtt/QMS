@@ -75,8 +75,9 @@ const Login = () => {
                 className="w-full max-w-md mx-auto object-contain"
               />
               <div className="mt-8">
-                <h2 className="text-2xl font-bold text-gray-200">Queue Management System</h2>
-              </div>
+     <h2 className="text-1xl font-bold" style={{ color: "#2D5DA8" }}> Queue Management System
+       </h2>             
+ </div>
             </div>
           </div>
         </div>
