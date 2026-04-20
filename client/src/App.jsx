@@ -19,6 +19,7 @@ import SupervisorDashboard from './pages/SupervisorDashboard';
 import PermissionManagement from './pages/admin/PermissionManagement';
 import RolePermissionManagement from './pages/admin/RolePermissionManagement';
 import PerformanceDashboard from './pages/PerformanceDashboard';
+import OfficerPerformance from './pages/OfficerPerformance';
 
 import BaseData from './pages/BaseData';
 import ZoneManagement from './pages/admin/ZoneManagement';
@@ -112,6 +113,16 @@ function App() {
                       element={
                         <ProtectedRouteWithPermission permission={PERMISSIONS.VIEW_REPORTS}>
                           <PerformanceDashboard />
+                        </ProtectedRouteWithPermission>
+                      } 
+                    />
+
+                    {/* OFFICER PERFORMANCE - Detailed officer metrics by zone */}
+                    <Route 
+                      path="/zone/:zoneId/performance" 
+                      element={
+                        <ProtectedRouteWithPermission permission={PERMISSIONS.VIEW_REPORTS}>
+                          <OfficerPerformance />
                         </ProtectedRouteWithPermission>
                       } 
                     />

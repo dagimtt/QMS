@@ -148,7 +148,7 @@ const Layout = () => {
   const getNavigation = () => {
     const nav = [];
     
-    // FOR SUPERVISORS: ONLY SHOW ESCALATIONS with their zone
+    // FOR SUPERVISORS: ONLY SHOW ESCALATIONS and OFFICER PERFORMANCE
     if (isSupervisor) {
       if (supervisorZoneId) {
         console.log('Building navigation with zone ID:', supervisorZoneId);
@@ -156,6 +156,12 @@ const Layout = () => {
           name: 'Escalations', 
           href: `/supervisor/${supervisorZoneId}`, 
           icon: ExclamationTriangleIcon 
+        });
+        // Add Officer Performance link for supervisors
+        nav.push({ 
+          name: 'Officer Performance', 
+          href: `/zone/${supervisorZoneId}/performance`, 
+          icon: ChartBarIcon 
         });
       } else if (loadingZone) {
         nav.push({ 

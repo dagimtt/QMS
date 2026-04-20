@@ -89,10 +89,10 @@ const ticketSchema = new mongoose.Schema({
   },
   // Performance metadata
   performanceMetrics: {
-    responseTime: { type: Number, default: 0 }, // Time between call and service start
-    handlingTime: { type: Number, default: 0 }, // Time spent handling the ticket
-    idleTime: { type: Number, default: 0 }, // Time between steps
-    efficiency: { type: Number, default: 0 } // Calculated efficiency score (0-100)
+    responseTime: { type: Number, default: 0 },
+    handlingTime: { type: Number, default: 0 },
+    idleTime: { type: Number, default: 0 },
+    efficiency: { type: Number, default: 0 }
   },
 
   // Escalation Details
@@ -193,14 +193,13 @@ ticketSchema.methods.completeStep = function(step, user) {
     this.stepCompletionTime = completionTime;
     this.serviceTime = completionTime;
     
-    // Calculate efficiency score (lower is better)
-    // Assuming 60 seconds is optimal for a step
+    // Calculate efficiency score (lower time is better, optimal is 60 seconds)
     const optimalTime = 60;
-    const efficiency = Math.max(0, Math.min(100, (optimalTime / completionTime) * 100));
+    const efficiency = Math.max(0, Math.min(100, Math.round((optimalTime / completionTime) * 100)));
     this.performanceMetrics = {
       ...this.performanceMetrics,
       handlingTime: completionTime,
-      efficiency: Math.round(efficiency)
+      efficiency: efficiency
     };
   }
   
@@ -211,11 +210,11 @@ ticketSchema.methods.completeStep = function(step, user) {
   return this;
 };
 
-// Method to calculate officer performance metrics
+// Method to calculate officer performance metrics by step
 ticketSchema.statics.getOfficerPerformance = async function(officerId, startDate, endDate) {
   const match = {
     completedBy: officerId,
-    status: 'Completed'
+    completedAtStep: { $in: ['Verification', 'Payment', 'Validation', 'Authorization'] }
   };
   
   if (startDate && endDate) {
@@ -242,7 +241,7 @@ ticketSchema.statics.getOfficerPerformance = async function(officerId, startDate
     {
       $group: {
         _id: null,
-        totalTickets: { $sum: 1 },
+        totalCompletions: { $sum: 1 },
         overallAvgTime: { $avg: '$stepCompletionTime' },
         totalTime: { $sum: '$stepCompletionTime' }
       }
@@ -251,8 +250,25 @@ ticketSchema.statics.getOfficerPerformance = async function(officerId, startDate
   
   return {
     byStep: stats,
-    overall: totalStats[0] || { totalTickets: 0, overallAvgTime: 0, totalTime: 0 }
+    overall: totalStats[0] || { totalCompletions: 0, overallAvgTime: 0, totalTime: 0 }
   };
+};
+
+// Method to get all step completions for an officer
+ticketSchema.statics.getOfficerStepCompletions = async function(officerId, step, limit = 50) {
+  const match = {
+    completedBy: officerId,
+    completedAtStep: { $in: ['Verification', 'Payment', 'Validation', 'Authorization'] }
+  };
+  
+  if (step) {
+    match.completedAtStep = step;
+  }
+  
+  return await this.find(match)
+    .populate('service', 'name code')
+    .sort({ completedAt: -1 })
+    .limit(parseInt(limit));
 };
 
 // Add audit log
